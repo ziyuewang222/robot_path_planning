@@ -1,0 +1,12 @@
+# 虚拟环境与缓存
+.venv/
+__pycache__/
+*.pyc
+
+# 日志与模型权重大文件
+logs/
+models/
+weights/
+*.zip
+*.pth
+*.pt
