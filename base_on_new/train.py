@@ -1,12 +1,24 @@
-import os
+import json
 import random
-import numpy as np
+from datetime import datetime
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from collections import deque
 
-from config import TRAIN_MAP_SIZE, TRAIN_MAX_MACRO_STEPS, SENSOR_RANGE, SIGMA, MAP_GENERATOR
+from config import (
+    TRAIN_MAP_SIZE,
+    TRAIN_MAX_MACRO_STEPS,
+    SENSOR_RANGE,
+    SIGMA,
+    MAP_GENERATOR,
+    CHECKPOINTS_DIR,
+    LOGS_DIR,
+    METRICS_DIR,
+    CONFIG_SNAPSHOTS_DIR,
+    CURRENT_RUN_DIR,
+)
 from grid_env import GridWorldEnv
 from state_pipeline import StateTensorPipeline
 from models import SpatialFCN, SpatialActionDecision
@@ -106,9 +118,35 @@ def train_main():
     epsilon_start = 0.8
     epsilon_end = 0.1
     epsilon_decay = 0.95
+    experiment_name = f"spatial_fcn_rl_m{map_size}_{MAP_GENERATOR}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"当前使用的底层计算加速设备: {device}")
+
+    CURRENT_RUN_DIR.mkdir(parents=True, exist_ok=True)
+    CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    METRICS_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    run_meta = {
+        "experiment_name": experiment_name,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "map_size": map_size,
+        "max_episodes": max_episodes,
+        "max_macro_steps_per_epi": max_macro_steps_per_epi,
+        "batch_size": batch_size,
+        "epsilon_start": epsilon_start,
+        "epsilon_end": epsilon_end,
+        "epsilon_decay": epsilon_decay,
+        "device": str(device),
+        "map_generator": MAP_GENERATOR,
+    }
+    with open(CONFIG_SNAPSHOTS_DIR / "train_config.json", "w", encoding="utf-8") as f:
+        json.dump(run_meta, f, ensure_ascii=False, indent=2)
+
+    print(f"本次实验名: {experiment_name}")
+    print(f"输出目录: {CURRENT_RUN_DIR}")
 
     env = GridWorldEnv(map_size=map_size, sensor_range=SENSOR_RANGE, map_generator=MAP_GENERATOR)
     pipeline = StateTensorPipeline(map_size=map_size, sigma=SIGMA, device=device)
@@ -117,7 +155,6 @@ def train_main():
     trainer = SpatialQTrainer(lr=3e-4, gamma=0.98, device=device)
     
     # 创建模型权重保存目录
-    os.makedirs("weights", exist_ok=True)
     
     epsilon = epsilon_start
     
@@ -179,9 +216,19 @@ def train_main():
         
         print(f"Episode [{episode:02d}/{max_episodes:02d}] | 累积物理回报: {total_reward:7.2f} | 探索率(eps): {epsilon:.3f} | 平均 MSE 损失: {avg_loss:.4f} | 回合步数: {step:2d}")
         
+        log_line = {
+            "episode": episode,
+            "reward": total_reward,
+            "avg_loss": avg_loss,
+            "epsilon": epsilon,
+            "steps": step,
+        }
+        with open(LOGS_DIR / "train_progress.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_line, ensure_ascii=False) + "\n")
+
         # 定期保存权重文件
         if episode % 10 == 0:
-            save_path = f"weights/fcn_rl_ep{episode}.pth"
+            save_path = CHECKPOINTS_DIR / f"fcn_rl_ep{episode:03d}.pth"
             torch.save(trainer.policy_net.state_dict(), save_path)
             print(f"--> 模型权重已成功归档至: {save_path}")
 

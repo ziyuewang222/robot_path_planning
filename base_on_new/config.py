@@ -1,10 +1,32 @@
 # 这个文件是常数配置文件，修改这里就可以修改训练和测试的参数
 
+from pathlib import Path
+from datetime import datetime
+
+# 实验命名会自动拼接这些信息，便于区分不同训练任务
+EXPERIMENT_PREFIX = "spatial_fcn_rl"
+
+# ---------------------------------------------------------------------------
+# 项目内统一输出目录
+# ---------------------------------------------------------------------------
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+ARTIFACTS_ROOT = PROJECT_ROOT / "artifacts"
+RUNS_ROOT = ARTIFACTS_ROOT / "runs"
+CURRENT_RUN_NAME = f"{EXPERIMENT_PREFIX}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+CURRENT_RUN_DIR = RUNS_ROOT / CURRENT_RUN_NAME
+CHECKPOINTS_DIR = CURRENT_RUN_DIR / "checkpoints"
+LOGS_DIR = CURRENT_RUN_DIR / "logs"
+METRICS_DIR = CURRENT_RUN_DIR / "metrics"
+CONFIG_SNAPSHOTS_DIR = CURRENT_RUN_DIR / "configs"
+LEGACY_ROOT = PROJECT_ROOT / "legacy"
+LEGACY_CODE_DIR = LEGACY_ROOT / "prior_rubbish"
+
 # 训练集固定尺寸（训练权重时使用，改这一处即可）
 TRAIN_MAP_SIZE = 100
 
 # 测试/部署地图尺寸（真实地图尺寸，改这一处即可）
-TEST_MAP_SIZE = 200
+TEST_MAP_SIZE = 100
 
 # 传感器视距（栅格），不随地图尺寸变化
 SENSOR_RANGE = 12

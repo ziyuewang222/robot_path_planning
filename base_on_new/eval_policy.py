@@ -1,10 +1,19 @@
 import os
 import time
+
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
-from config import TEST_MAP_SIZE, TEST_SEED, SENSOR_RANGE, SIGMA, MAP_GENERATOR, max_macro_steps_for
+from config import (
+    TEST_MAP_SIZE,
+    TEST_SEED,
+    SENSOR_RANGE,
+    SIGMA,
+    MAP_GENERATOR,
+    max_macro_steps_for,
+    CHECKPOINTS_DIR,
+)
 from grid_env import GridWorldEnv
 from state_pipeline import StateTensorPipeline
 from models import SpatialFCN, SpatialActionDecision
@@ -147,7 +156,7 @@ def evaluate_model(weight_path):
             vis.update(step, explored, pos, state_tensor, q_raw, q_masked, chosen_coord)
             
             # 执行底层 A* 闭环运动
-            next_explored, next_pos, reward, n_steps, done, info = env.step_macro(chosen_coord)
+            next_explored, next_pos, _reward, n_steps, done, info = env.step_macro(chosen_coord)
             
             total_steps += n_steps
             total_area += info['delta_area']
@@ -165,7 +174,7 @@ def evaluate_model(weight_path):
     time.sleep(10)
 
 if __name__ == "__main__":
-    # 假设调取你第 20 个回合保存的模型权重进行可视化验证
-    # 你可以随时更改为 weights/fcn_rl_ep50.pth 查看最终训完的版本
-    target_weights = "weights/fcn_rl_ep50.pth"
+    # 手动修改这里选择要测试的权重文件：把路径换成你想评估的 checkpoint
+    # 例如：CHECKPOINTS_DIR / "fcn_rl_ep010.pth" 或 CHECKPOINTS_DIR / "fcn_rl_ep050.pth"
+    target_weights = str(CHECKPOINTS_DIR / "fcn_rl_ep050.pth")
     evaluate_model(target_weights)
