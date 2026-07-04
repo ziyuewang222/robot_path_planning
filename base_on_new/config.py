@@ -1,3 +1,5 @@
+# 这个文件是常数配置文件，修改这里就可以修改训练和测试的参数
+
 # 训练集固定尺寸（训练权重时使用，改这一处即可）
 TRAIN_MAP_SIZE = 100
 
@@ -25,7 +27,7 @@ DOOR_PROTECT_MARGIN = 3
 
 OBS_MIN_SIZE = 2
 OBS_MAX_SIZE = 4
-NUM_OBSTACLES = 45
+NUM_OBSTACLES_BASE = 45
 
 ROW_MID1 = 45
 ROW_MID2 = 70
@@ -45,6 +47,11 @@ SPAWN_X_MIN = 5
 SPAWN_X_MAX = 30
 SPAWN_Y_MIN = 5
 SPAWN_Y_MAX = 30
+
+
+def num_obstacles_for(map_size: int, base_count: int = NUM_OBSTACLES_BASE) -> int:
+    """地图变大时，障碍物数量按 MAP_TEMPLATE_SIZE 基准等比增加"""
+    return int(base_count * map_size / MAP_TEMPLATE_SIZE)
 
 
 def max_macro_steps_for(map_size: int, base_steps: int = TRAIN_MAX_MACRO_STEPS) -> int:

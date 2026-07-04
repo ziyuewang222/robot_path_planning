@@ -9,7 +9,7 @@ from config import (
     DOOR_PROTECT_MARGIN,
     OBS_MIN_SIZE,
     OBS_MAX_SIZE,
-    NUM_OBSTACLES,
+    num_obstacles_for,
     ROW_MID1,
     ROW_MID2,
     COL_MID1,
@@ -196,7 +196,7 @@ class GridWorldEnv:
         obs_lo = OBS_MAX_SIZE + 2
         obs_hi = T - OBS_MAX_SIZE - 2
         if obs_hi > obs_lo:
-            for _ in range(NUM_OBSTACLES):
+            for _ in range(num_obstacles_for(S)):
                 rx = np.random.randint(obs_lo, obs_hi)
                 ry = np.random.randint(obs_lo, obs_hi)
 
