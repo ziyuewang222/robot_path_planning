@@ -14,6 +14,7 @@ from config import (
     SIGMA,
     MAP_GENERATOR,
     CHECKPOINTS_DIR,
+    CHECKPOINTS_ROOT,
     LOGS_DIR,
     METRICS_DIR,
     CONFIG_SNAPSHOTS_DIR,
@@ -128,6 +129,7 @@ def train_main():
     LOGS_DIR.mkdir(parents=True, exist_ok=True)
     METRICS_DIR.mkdir(parents=True, exist_ok=True)
     CONFIG_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    CHECKPOINTS_ROOT.mkdir(parents=True, exist_ok=True)
 
     run_meta = {
         "experiment_name": experiment_name,
@@ -229,8 +231,13 @@ def train_main():
         # 定期保存权重文件
         if episode % 10 == 0:
             save_path = CHECKPOINTS_DIR / f"fcn_rl_ep{episode:03d}.pth"
+            latest_path = CHECKPOINTS_ROOT / "spatial_fcn_rl_latest.pth"
+            best_path = CHECKPOINTS_ROOT / "spatial_fcn_rl_best.pth"
             torch.save(trainer.policy_net.state_dict(), save_path)
+            torch.save(trainer.policy_net.state_dict(), latest_path)
+            torch.save(trainer.policy_net.state_dict(), best_path)
             print(f"--> 模型权重已成功归档至: {save_path}")
+            print(f"--> 最新权重已同步到: {latest_path}")
 
 if __name__ == "__main__":
     train_main()

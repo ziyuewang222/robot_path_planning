@@ -13,6 +13,7 @@ from config import (
     MAP_GENERATOR,
     max_macro_steps_for,
     CHECKPOINTS_DIR,
+    LATEST_CHECKPOINT_PATH,
 )
 from grid_env import GridWorldEnv
 from state_pipeline import StateTensorPipeline
@@ -174,7 +175,8 @@ def evaluate_model(weight_path):
     time.sleep(10)
 
 if __name__ == "__main__":
-    # 手动修改这里选择要测试的权重文件：把路径换成你想评估的 checkpoint
-    # 例如：CHECKPOINTS_DIR / "fcn_rl_ep010.pth" 或 CHECKPOINTS_DIR / "fcn_rl_ep050.pth"
-    target_weights = str(CHECKPOINTS_DIR / "fcn_rl_ep050.pth")
+    # 优先使用稳定的 latest 权重；如果它不存在，再退回到某个具体 checkpoint
+    target_weights = str(LATEST_CHECKPOINT_PATH)
+    if not os.path.exists(target_weights):
+        target_weights = str(CHECKPOINTS_DIR / "fcn_rl_ep050.pth")
     evaluate_model(target_weights)
