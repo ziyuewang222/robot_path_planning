@@ -16,42 +16,40 @@ TRAIN_MAX_MACRO_STEPS = 60
 TEST_SEED = 888
 
 # ---------------------------------------------------------------------------
-# 地图拓扑固定参数（像素级常量，地图变大时结构不变，仅外围空地扩大）
-# 以下坐标均基于 MAP_TEMPLATE_SIZE 网格设计
+# 房间-走廊地图生成（固定像素尺寸，不随地图等比放大）
+# 地图变大时仅增加房间数量；房间/走廊/障碍物尺寸保持不变
 # ---------------------------------------------------------------------------
-MAP_TEMPLATE_SIZE = 100
 
-WALL_WIDTH = 2
-DOOR_WIDTH = 6
-DOOR_PROTECT_MARGIN = 3
+# 走廊宽度（栅格）
+CORRIDOR_WIDTH = 3
 
+# 房间内部尺寸范围（不含墙体，单位：栅格）
+ROOM_MIN_SIZE = 12
+ROOM_MAX_SIZE = 22
+
+# 房间放置：bounding box 之间的最小间距
+ROOM_PADDING = 3
+ROOM_PLACE_ATTEMPTS = 200
+
+# 基准地图 (TRAIN_MAP_SIZE) 上的目标房间数；地图面积翻倍则房间数约按面积比增加
+ROOMS_BASE_COUNT = 6
+
+# 每个房间内的零星障碍物（尺寸固定，不随地图缩放）
 OBS_MIN_SIZE = 2
 OBS_MAX_SIZE = 4
-NUM_OBSTACLES_BASE = 45
+OBSTACLES_PER_ROOM_MIN = 1
+OBSTACLES_PER_ROOM_MAX = 5
+OBSTACLE_PLACE_ATTEMPTS = 30
+OBSTACLE_WALL_MARGIN = 2
 
-ROW_MID1 = 45
-ROW_MID2 = 70
-COL_MID1 = 35
-COL_MID2 = 65
-
-DOOR_POSITIONS = [
-    (ROW_MID1, 15),
-    (ROW_MID1, 80),
-    (ROW_MID2, 30),
-    (ROW_MID2, 85),
-    (20, COL_MID1),
-    (80, COL_MID2),
-]
-
-SPAWN_X_MIN = 5
-SPAWN_X_MAX = 30
-SPAWN_Y_MIN = 5
-SPAWN_Y_MAX = 30
+# 出生点距离房间内壁的最小留白
+SPAWN_MARGIN = 2
 
 
-def num_obstacles_for(map_size: int, base_count: int = NUM_OBSTACLES_BASE) -> int:
-    """地图变大时，障碍物数量按 MAP_TEMPLATE_SIZE 基准等比增加"""
-    return int(base_count * map_size / MAP_TEMPLATE_SIZE)
+def rooms_for(map_size: int, base_count: int = ROOMS_BASE_COUNT) -> int:
+    """地图变大时，按面积比例增加房间数量"""
+    ratio = (map_size / TRAIN_MAP_SIZE) ** 2
+    return max(2, int(base_count * ratio))
 
 
 def max_macro_steps_for(map_size: int, base_steps: int = TRAIN_MAX_MACRO_STEPS) -> int:

@@ -3,22 +3,19 @@ import matplotlib.pyplot as plt
 from local_planner import AStarPlanner
 from config import (
     SENSOR_RANGE,
-    MAP_TEMPLATE_SIZE,
-    WALL_WIDTH,
-    DOOR_WIDTH,
-    DOOR_PROTECT_MARGIN,
+    CORRIDOR_WIDTH,
+    ROOM_MIN_SIZE,
+    ROOM_MAX_SIZE,
+    ROOM_PADDING,
+    ROOM_PLACE_ATTEMPTS,
     OBS_MIN_SIZE,
     OBS_MAX_SIZE,
-    num_obstacles_for,
-    ROW_MID1,
-    ROW_MID2,
-    COL_MID1,
-    COL_MID2,
-    DOOR_POSITIONS,
-    SPAWN_X_MIN,
-    SPAWN_X_MAX,
-    SPAWN_Y_MIN,
-    SPAWN_Y_MAX,
+    OBSTACLES_PER_ROOM_MIN,
+    OBSTACLES_PER_ROOM_MAX,
+    OBSTACLE_PLACE_ATTEMPTS,
+    OBSTACLE_WALL_MARGIN,
+    SPAWN_MARGIN,
+    rooms_for,
 )
 
 
@@ -43,6 +40,7 @@ class GridWorldEnv:
         self.ground_truth = None
         self.explored_map = None
         self.robot_pos = None
+        self.rooms = []
 
         self.fig = None
         self.ax = None
@@ -161,67 +159,148 @@ class GridWorldEnv:
         plt.pause(0.05)
 
     def _build_structured_map(self):
-        """
-        在固定像素坐标上构建室内结构；地图变大时仅外围空地扩大，拓扑与墙厚不变。
-        """
+        """程序化生成房间-走廊地图：地图变大时房间变多，尺寸保持不变。"""
         S = self.map_size
-        T = min(MAP_TEMPLATE_SIZE, S)
+        self.ground_truth[:] = 1
 
-        self.ground_truth[0, :] = 1
-        self.ground_truth[-1, :] = 1
-        self.ground_truth[:, 0] = 1
-        self.ground_truth[:, -1] = 1
+        self.rooms = self._generate_rooms(S)
+        for room in self.rooms:
+            self._carve_room(room)
+        self._connect_rooms(self.rooms)
+        for room in self.rooms:
+            self._place_room_obstacles(room)
 
-        self.ground_truth[ROW_MID1:ROW_MID1 + WALL_WIDTH, 1:T - 1] = 1
-        self.ground_truth[ROW_MID2:ROW_MID2 + WALL_WIDTH, 1:T - 1] = 1
-        self.ground_truth[1:ROW_MID1, COL_MID1:COL_MID1 + WALL_WIDTH] = 1
-        self.ground_truth[ROW_MID1:T - 1, COL_MID2:COL_MID2 + WALL_WIDTH] = 1
+    def _generate_rooms(self, map_size):
+        target = rooms_for(map_size)
+        rooms = []
+        for _ in range(target):
+            for _ in range(ROOM_PLACE_ATTEMPTS):
+                w = np.random.randint(ROOM_MIN_SIZE, ROOM_MAX_SIZE + 1)
+                h = np.random.randint(ROOM_MIN_SIZE, ROOM_MAX_SIZE + 1)
+                x_max = map_size - w - 3
+                y_max = map_size - h - 3
+                if x_max < 1 or y_max < 1:
+                    break
 
-        protected_mask = np.zeros((S, S), dtype=bool)
+                x = np.random.randint(1, x_max + 1)
+                y = np.random.randint(1, y_max + 1)
+                room = (x, y, w, h)
+                if not self._room_overlaps(room, rooms):
+                    rooms.append(room)
+                    break
+        return rooms
 
-        for r, c in DOOR_POSITIONS:
-            if r >= T or c >= T:
-                continue
-            r_start = max(1, r - DOOR_WIDTH // 2)
-            r_end = min(T - 1, r + DOOR_WIDTH)
-            c_start = max(1, c - DOOR_WIDTH // 2)
-            c_end = min(T - 1, c + DOOR_WIDTH)
+    def _room_bbox(self, room):
+        x, y, w, h = room
+        return x, y, x + w + 2, y + h + 2
 
-            self.ground_truth[r_start:r_end, c_start:c_end] = 0
-            protected_mask[
-                max(0, r_start - DOOR_PROTECT_MARGIN):min(S, r_end + DOOR_PROTECT_MARGIN),
-                max(0, c_start - DOOR_PROTECT_MARGIN):min(S, c_end + DOOR_PROTECT_MARGIN),
-            ] = True
+    def _room_overlaps(self, room, rooms):
+        ax1, ay1, ax2, ay2 = self._room_bbox(room)
+        pad = ROOM_PADDING
+        for other in rooms:
+            bx1, by1, bx2, by2 = self._room_bbox(other)
+            if not (ax2 + pad <= bx1 or bx2 + pad <= ax1 or ay2 + pad <= by1 or by2 + pad <= ay1):
+                return True
+        return False
 
-        obs_lo = OBS_MAX_SIZE + 2
-        obs_hi = T - OBS_MAX_SIZE - 2
-        if obs_hi > obs_lo:
-            for _ in range(num_obstacles_for(S)):
-                rx = np.random.randint(obs_lo, obs_hi)
-                ry = np.random.randint(obs_lo, obs_hi)
+    def _carve_room(self, room):
+        x, y, w, h = room
+        self.ground_truth[x + 1:x + 1 + w, y + 1:y + 1 + h] = 0
 
-                w = np.random.randint(OBS_MIN_SIZE, OBS_MAX_SIZE + 1)
-                h = np.random.randint(OBS_MIN_SIZE, OBS_MAX_SIZE + 1)
+    def _room_center(self, room):
+        x, y, w, h = room
+        return x + 1 + w // 2, y + 1 + h // 2
 
-                if rx + w >= T or ry + h >= T:
-                    continue
+    def _connect_rooms(self, rooms):
+        if len(rooms) < 2:
+            return
 
-                target_slice = protected_mask[rx:rx + w, ry:ry + h]
-                if not np.any(target_slice) and np.all(self.ground_truth[rx:rx + w, ry:ry + h] == 0):
-                    self.ground_truth[rx:rx + w, ry:ry + h] = 1
+        centers = [self._room_center(room) for room in rooms]
+        in_tree = {0}
+        while len(in_tree) < len(rooms):
+            best_dist = None
+            best_pair = None
+            for i in in_tree:
+                for j in range(len(rooms)):
+                    if j in in_tree:
+                        continue
+                    dist = abs(centers[i][0] - centers[j][0]) + abs(centers[i][1] - centers[j][1])
+                    if best_dist is None or dist < best_dist:
+                        best_dist = dist
+                        best_pair = (i, j)
+            i, j = best_pair
+            self._carve_corridor(centers[i], centers[j])
+            in_tree.add(j)
+
+    def _carve_corridor(self, start, end):
+        x1, y1 = start
+        x2, y2 = end
+        half = CORRIDOR_WIDTH // 2
+        if np.random.rand() < 0.5:
+            self._carve_horizontal_corridor(x1, x2, y1, half)
+            self._carve_vertical_corridor(y1, y2, x2, half)
+        else:
+            self._carve_vertical_corridor(y1, y2, x1, half)
+            self._carve_horizontal_corridor(x1, x2, y2, half)
+
+    def _carve_horizontal_corridor(self, x1, x2, y, half):
+        xa, xb = sorted((x1, x2))
+        y0 = max(1, y - half)
+        y1 = min(self.map_size - 1, y - half + CORRIDOR_WIDTH)
+        self.ground_truth[xa:xb + 1, y0:y1] = 0
+
+    def _carve_vertical_corridor(self, y1, y2, x, half):
+        ya, yb = sorted((y1, y2))
+        x0 = max(1, x - half)
+        x1 = min(self.map_size - 1, x - half + CORRIDOR_WIDTH)
+        self.ground_truth[x0:x1, ya:yb + 1] = 0
+
+    def _place_room_obstacles(self, room):
+        x, y, w, h = room
+        n_obs = np.random.randint(OBSTACLES_PER_ROOM_MIN, OBSTACLES_PER_ROOM_MAX + 1)
+        ix1 = x + 1 + OBSTACLE_WALL_MARGIN
+        iy1 = y + 1 + OBSTACLE_WALL_MARGIN
+        ix2 = x + w - OBSTACLE_WALL_MARGIN
+        iy2 = y + h - OBSTACLE_WALL_MARGIN
+        if ix2 <= ix1 or iy2 <= iy1:
+            return
+
+        for _ in range(n_obs):
+            for _ in range(OBSTACLE_PLACE_ATTEMPTS):
+                ow = np.random.randint(OBS_MIN_SIZE, OBS_MAX_SIZE + 1)
+                oh = np.random.randint(OBS_MIN_SIZE, OBS_MAX_SIZE + 1)
+                if ix2 - ow + 1 < ix1 or iy2 - oh + 1 < iy1:
+                    break
+
+                rx = np.random.randint(ix1, ix2 - ow + 2)
+                ry = np.random.randint(iy1, iy2 - oh + 2)
+                if np.all(self.ground_truth[rx:rx + ow, ry:ry + oh] == 0):
+                    self.ground_truth[rx:rx + ow, ry:ry + oh] = 1
+                    break
 
     def _get_valid_spawn_pos(self):
-        """寻找合法的安全出生点 (确保出生周围 3x3 范围绝对空旷)"""
-        x_lo = max(1, SPAWN_X_MIN)
-        x_hi = min(self.map_size - 2, SPAWN_X_MAX)
-        y_lo = max(1, SPAWN_Y_MIN)
-        y_hi = min(self.map_size - 2, SPAWN_Y_MAX)
+        """在随机房间内部寻找合法出生点（周围 3x3 空旷）"""
+        if not self.rooms:
+            raise RuntimeError("地图生成失败：未放置任何房间")
 
-        while True:
-            x = np.random.randint(x_lo, x_hi)
-            y = np.random.randint(y_lo, y_hi)
-            if np.all(self.ground_truth[x - 1:x + 2, y - 1:y + 2] == 0):
-                return x, y
+        for _ in range(500):
+            room = self.rooms[np.random.randint(len(self.rooms))]
+            x, y, w, h = room
+            x_lo = x + 1 + SPAWN_MARGIN
+            x_hi = x + w - SPAWN_MARGIN
+            y_lo = y + 1 + SPAWN_MARGIN
+            y_hi = y + h - SPAWN_MARGIN
+            if x_lo >= x_hi or y_lo >= y_hi:
+                continue
+
+            px = np.random.randint(x_lo, x_hi)
+            py = np.random.randint(y_lo, y_hi)
+            if np.all(self.ground_truth[px - 1:px + 2, py - 1:py + 2] == 0):
+                return px, py
+
+        room = self.rooms[0]
+        x, y, w, h = room
+        return x + 1 + w // 2, y + 1 + h // 2
 
     def _update_fov_bresenham(self):
         rx, ry = self.robot_pos
