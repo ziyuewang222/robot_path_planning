@@ -1,10 +1,15 @@
 import time
 import matplotlib.pyplot as plt
-from config import TRAIN_MAP_SIZE, SENSOR_RANGE
+from config import TRAIN_MAP_SIZE, SENSOR_RANGE, MAP_GENERATOR
 from grid_env import GridWorldEnv
 
 if __name__ == "__main__":
-    env = GridWorldEnv(map_size=TRAIN_MAP_SIZE, sensor_range=SENSOR_RANGE, seed=42)
+    env = GridWorldEnv(
+        map_size=TRAIN_MAP_SIZE,
+        sensor_range=SENSOR_RANGE,
+        seed=42,
+        map_generator=MAP_GENERATOR,
+    )
     explored, pos = env.reset()
     
     print("正在启动 Matplotlib 图形界面...")

@@ -1,11 +1,16 @@
 import time
-from config import TRAIN_MAP_SIZE, SENSOR_RANGE, SIGMA
+from config import TRAIN_MAP_SIZE, SENSOR_RANGE, SIGMA, MAP_GENERATOR
 from grid_env import GridWorldEnv
 from state_pipeline import StateTensorPipeline
 from models import SpatialFCN, SpatialActionDecision
 
 if __name__ == "__main__":
-    env = GridWorldEnv(map_size=TRAIN_MAP_SIZE, sensor_range=SENSOR_RANGE, seed=42)
+    env = GridWorldEnv(
+        map_size=TRAIN_MAP_SIZE,
+        sensor_range=SENSOR_RANGE,
+        seed=42,
+        map_generator=MAP_GENERATOR,
+    )
     pipeline = StateTensorPipeline(map_size=TRAIN_MAP_SIZE, sigma=SIGMA)
     model = SpatialFCN()
     decision = SpatialActionDecision(model, epsilon=0.5) # 提高探索率以测试不同终点

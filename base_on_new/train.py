@@ -6,7 +6,7 @@ import torch.nn as nn
 import torch.optim as optim
 from collections import deque
 
-from config import TRAIN_MAP_SIZE, TRAIN_MAX_MACRO_STEPS, SENSOR_RANGE, SIGMA
+from config import TRAIN_MAP_SIZE, TRAIN_MAX_MACRO_STEPS, SENSOR_RANGE, SIGMA, MAP_GENERATOR
 from grid_env import GridWorldEnv
 from state_pipeline import StateTensorPipeline
 from models import SpatialFCN, SpatialActionDecision
@@ -110,7 +110,7 @@ def train_main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"当前使用的底层计算加速设备: {device}")
 
-    env = GridWorldEnv(map_size=map_size, sensor_range=SENSOR_RANGE)
+    env = GridWorldEnv(map_size=map_size, sensor_range=SENSOR_RANGE, map_generator=MAP_GENERATOR)
     pipeline = StateTensorPipeline(map_size=map_size, sigma=SIGMA, device=device)
 
 

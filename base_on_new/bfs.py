@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # 直接复用你现有的底层物理环境
-from config import TEST_MAP_SIZE, TEST_SEED, SENSOR_RANGE, max_macro_steps_for
+from config import TEST_MAP_SIZE, TEST_SEED, SENSOR_RANGE, MAP_GENERATOR, max_macro_steps_for
 from grid_env import GridWorldEnv
 
 class BFSFrontierPlanner:
@@ -57,7 +57,12 @@ class BFSFrontierPlanner:
 def run_bfs_evaluation():
     # 极度关键：使用和 CNN 评估脚本一模一样的地图种子 (seed=888)，确保房间布局完全一致！
     map_size = TEST_MAP_SIZE
-    env = GridWorldEnv(map_size=map_size, sensor_range=SENSOR_RANGE, seed=TEST_SEED)
+    env = GridWorldEnv(
+        map_size=map_size,
+        sensor_range=SENSOR_RANGE,
+        seed=TEST_SEED,
+        map_generator=MAP_GENERATOR,
+    )
     planner = BFSFrontierPlanner()
     
     explored, pos = env.reset()

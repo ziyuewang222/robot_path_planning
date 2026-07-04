@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
-from config import TEST_MAP_SIZE, TEST_SEED, SENSOR_RANGE, SIGMA, max_macro_steps_for
+from config import TEST_MAP_SIZE, TEST_SEED, SENSOR_RANGE, SIGMA, MAP_GENERATOR, max_macro_steps_for
 from grid_env import GridWorldEnv
 from state_pipeline import StateTensorPipeline
 from models import SpatialFCN, SpatialActionDecision
@@ -114,7 +114,12 @@ def evaluate_model(weight_path):
     
     # 2. 初始化测试环境与决策器 (epsilon设为0.0，关闭随机探索)
     map_size = TEST_MAP_SIZE
-    env = GridWorldEnv(map_size=map_size, sensor_range=SENSOR_RANGE, seed=TEST_SEED)
+    env = GridWorldEnv(
+        map_size=map_size,
+        sensor_range=SENSOR_RANGE,
+        seed=TEST_SEED,
+        map_generator=MAP_GENERATOR,
+    )
     pipeline = StateTensorPipeline(map_size=map_size, sigma=SIGMA, device=device)
     decision = SpatialActionDecision(policy_net, epsilon=0.0, device=device)
 

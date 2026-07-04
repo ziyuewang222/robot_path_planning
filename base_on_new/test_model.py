@@ -1,7 +1,7 @@
 import time
 import torch
 import matplotlib.pyplot as plt
-from config import TRAIN_MAP_SIZE, TEST_MAP_SIZE, SENSOR_RANGE, SIGMA
+from config import TRAIN_MAP_SIZE, TEST_MAP_SIZE, SENSOR_RANGE, SIGMA, MAP_GENERATOR
 from grid_env import GridWorldEnv
 from state_pipeline import StateTensorPipeline
 from models import SpatialFCN, SpatialActionDecision
@@ -57,7 +57,12 @@ if __name__ == "__main__":
     test_scale_invariance()
     
     # 2. 构造 100x100 真实环境测试截断推理
-    env = GridWorldEnv(map_size=TRAIN_MAP_SIZE, sensor_range=SENSOR_RANGE, seed=1024)
+    env = GridWorldEnv(
+        map_size=TRAIN_MAP_SIZE,
+        sensor_range=SENSOR_RANGE,
+        seed=1024,
+        map_generator=MAP_GENERATOR,
+    )
     pipeline = StateTensorPipeline(map_size=TRAIN_MAP_SIZE, sigma=SIGMA)
     
     # 初始化模型（由于没训练，Q值是随机生成的，但这足够验证前向逻辑）
