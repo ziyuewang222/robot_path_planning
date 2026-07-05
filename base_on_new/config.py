@@ -33,10 +33,10 @@ LEGACY_ROOT = PROJECT_ROOT / "legacy"
 LEGACY_CODE_DIR = LEGACY_ROOT / "prior_rubbish"
 
 # 训练集固定尺寸（训练权重时使用，改这一处即可）
-TRAIN_MAP_SIZE = 100
+TRAIN_MAP_SIZE = 300
 
 # 测试/部署地图尺寸（真实地图尺寸，改这一处即可）
-TEST_MAP_SIZE = 200
+TEST_MAP_SIZE = 500
 
 # 传感器视距（栅格），不随地图尺寸变化
 SENSOR_RANGE = 12
@@ -44,7 +44,7 @@ SENSOR_RANGE = 12
 # 状态张量中小车高斯热力图的 sigma，不随地图尺寸变化
 SIGMA = 3.0
 
-TRAIN_MAX_MACRO_STEPS = 60
+TRAIN_MAX_MACRO_STEPS = 120
 TEST_SEED = 888
 
 # 地图生成器：运行前修改此项切换逻辑

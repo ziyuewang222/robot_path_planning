@@ -79,8 +79,8 @@ class PolicyInspector:
         self.robot, = self.axes["main"].plot([], [], "ro", markersize=7)
         self.stars["main"], = self.axes["main"].plot([], [], "r*", markersize=12)
 
-        for key, cmap in [("ch0", "viridis"), ("ch1", "magma"), ("ch2", "gray")]:
-            self.images[key] = self.axes[key].imshow(np.zeros((map_size, map_size)), cmap=cmap, origin="upper")
+        for key, cmap, vmin, vmax in [("ch0", "viridis", 0.0, 1.0), ("ch1", "magma", 0.0, 1.0), ("ch2", "gray", 0.0, 1.0)]:
+            self.images[key] = self.axes[key].imshow(np.zeros((map_size, map_size)), cmap=cmap, origin="upper", vmin=vmin, vmax=vmax)
         for key in ["full_patch", "half_patch", "quarter_patch", "patch_zoom"]:
             self.images[key] = self.axes[key].imshow(np.zeros((11, 11)), cmap="plasma" if key != "patch_zoom" else "viridis", origin="upper")
 
@@ -89,11 +89,13 @@ class PolicyInspector:
         self.axes["fusion_weights"].set_xticklabels(["1x", "1/2", "1/4"])
         self.axes["fusion_weights"].set_ylim(0, 1)
 
+        q_cmap = plt.cm.plasma.copy()
+        q_cmap.set_bad(color="#d9d9d9")
         for key in ["q_full", "q_half", "q_quarter", "q_masked"]:
-            self.images[key] = self.axes[key].imshow(np.zeros((map_size, map_size)), cmap="plasma", origin="upper")
+            self.images[key] = self.axes[key].imshow(np.zeros((map_size, map_size)), cmap=q_cmap, origin="upper", interpolation="nearest")
         self.stars["q_masked"], = self.axes["q_masked"].plot([], [], "g*", markersize=11)
         self.feature_line, = self.axes["feature_line"].plot([], [], lw=2)
-        self.q_hist = self.axes["q_hist"].hist([], bins=20)
+        self.axes["q_hist"].set_xlim(0, 1)
         self.status_box = self.axes["reserved"].text(
             0.02,
             0.98,
@@ -132,12 +134,42 @@ class PolicyInspector:
     @staticmethod
     def _normalize_for_display(x):
         x = np.asarray(x, dtype=np.float32)
-        lo = np.nanpercentile(x, 2)
-        hi = np.nanpercentile(x, 98)
-        if abs(hi - lo) < 1e-8:
+        finite_mask = np.isfinite(x)
+        if not np.any(finite_mask):
             return np.zeros_like(x, dtype=np.float32)
-        x = np.clip(x, lo, hi)
-        return (x - lo) / (hi - lo)
+        
+        valid_data = x[finite_mask]
+        lo = np.nanpercentile(valid_data, 1)
+        hi = np.nanpercentile(valid_data, 99)
+        
+        if abs(hi - lo) < 1e-6:
+            return np.clip(x, lo - 1e-6, hi + 1e-6)
+            
+        clipped = np.clip(x, lo, hi)
+        return (clipped - lo) / (hi - lo)
+
+    @staticmethod
+    def _crop_around(x, center, radius=35):
+        x = np.asarray(x, dtype=np.float32)
+        h, w = x.shape
+        if center is None:
+            cy, cx = h // 2, w // 2
+        else:
+            cy, cx = int(center[0]), int(center[1])
+        y0 = max(0, cy - radius)
+        y1 = min(h, cy + radius + 1)
+        x0 = max(0, cx - radius)
+        x1 = min(w, cx + radius + 1)
+        return x[y0:y1, x0:x1], (x0, x1, y0, y1)
+
+    @staticmethod
+    def _title_with_range(base, x):
+        x = np.asarray(x, dtype=np.float32)
+        finite = np.isfinite(x)
+        if not np.any(finite):
+            return f"{base} | no finite values"
+        vals = x[finite]
+        return f"{base} | min {vals.min():.2g}, max {vals.max():.2g}"
 
     def update(self, step_num, explored, pos, state_tensor, model_info, chosen_coord):
         self.images["main"].set_data(self._display_grid(explored))
@@ -145,14 +177,34 @@ class PolicyInspector:
         self.images["ch1"].set_data(state_tensor[1].cpu().numpy())
         self.images["ch2"].set_data(state_tensor[2].cpu().numpy())
 
-        self.images["full_patch"].set_data(self._normalize_for_display(model_info["full_patch"]))
-        self.images["half_patch"].set_data(self._normalize_for_display(model_info["half_patch"]))
-        self.images["quarter_patch"].set_data(self._normalize_for_display(model_info["quarter_patch"]))
-        self.images["q_full"].set_data(self._normalize_for_display(model_info["q_full"]))
-        self.images["q_half"].set_data(self._normalize_for_display(model_info["q_half"]))
-        self.images["q_quarter"].set_data(self._normalize_for_display(model_info["q_quarter"]))
-        self.images["q_masked"].set_data(self._normalize_for_display(model_info["q_masked_vis"]))
-        self.images["patch_zoom"].set_data(self._normalize_for_display(model_info["target_patch"]))
+        crop_center = chosen_coord if chosen_coord is not None else pos
+        display_items = [
+            ("full_patch", "Full-res local feature", model_info["full_patch"]),
+            ("half_patch", "Half-res local feature", model_info["half_patch"]),
+            ("quarter_patch", "Quarter-res local feature", model_info["quarter_patch"]),
+            ("q_full", "Full branch local Q", model_info["q_full"]),
+            ("q_half", "Half branch local Q", model_info["q_half"]),
+            ("q_quarter", "Quarter branch local Q", model_info["q_quarter"]),
+            ("q_masked", "Final masked local Q", model_info["q_masked_vis"]),
+            ("patch_zoom", "Raw Q local zoom", model_info["target_patch"]),
+        ]
+        for key, title, raw_arr in display_items:
+            local_arr, extent = self._crop_around(raw_arr, crop_center, radius=45)
+            norm_arr = self._normalize_for_display(local_arr)
+            masked_arr = np.ma.masked_invalid(norm_arr)
+            
+            self.images[key].set_data(masked_arr)
+            self.images[key].set_extent(extent)
+            
+            vmin = np.nanmin(masked_arr) if masked_arr.count() > 0 else 0.0
+            vmax = np.nanmax(masked_arr) if masked_arr.count() > 0 else 1.0
+            if vmin == vmax:
+                vmax += 1e-5
+            self.images[key].set_clim(vmin=vmin, vmax=vmax)
+            
+            self.axes[key].set_xlim(extent[0], extent[1])
+            self.axes[key].set_ylim(extent[3], extent[2])
+            self.axes[key].set_title(self._title_with_range(title, local_arr), fontsize=9)
 
         for bar, val in zip(self.fusion_bar, model_info["fusion_weights"]):
             bar.set_height(float(val))
@@ -161,12 +213,23 @@ class PolicyInspector:
         if chosen_coord is not None:
             self.stars["main"].set_data([chosen_coord[1]], [chosen_coord[0]])
             self.stars["q_masked"].set_data([chosen_coord[1]], [chosen_coord[0]])
+            self.stars["q_masked"].set_markersize(14)
+        else:
+            self.stars["main"].set_data([], [])
+            self.stars["q_masked"].set_data([], [])
 
-        self.feature_line.set_data(np.arange(len(model_info["feature_profile"])), model_info["feature_profile"])
-        self.axes["feature_line"].set_xlim(0, max(1, len(model_info["feature_profile"]) - 1))
+        fp = np.asarray(model_info["feature_profile"], dtype=np.float32)
+        if fp.size > 0:
+            fp = (fp - np.min(fp)) / (np.max(fp) - np.min(fp) + 1e-8)
+        self.feature_line.set_data(np.arange(len(fp)), fp)
+        self.axes["feature_line"].set_xlim(0, max(1, len(fp) - 1))
+        self.axes["feature_line"].set_ylim(0, 1.05)
 
         self.axes["q_hist"].cla()
-        self.axes["q_hist"].hist(model_info["q_masked_flat"], bins=30, color="#4C72B0", alpha=0.85)
+        q_flat = np.asarray(model_info["q_masked_flat"], dtype=np.float32)
+        if q_flat.size > 0:
+            self.axes["q_hist"].hist(q_flat, bins=30, color="#4C72B0", alpha=0.85)
+        self.axes["q_hist"].set_xlim(np.nanpercentile(q_flat, 2) if q_flat.size > 0 else 0, np.nanpercentile(q_flat, 98) if q_flat.size > 0 else 1)
 
         self.last_status = (
             f"step: {step_num}\n"
@@ -224,7 +287,7 @@ class InspectableRuntime(RLRuntime):
             "q_full": full_proj.mean(dim=1).squeeze(0).detach().cpu().numpy(),
             "q_half": half_up.mean(dim=1).squeeze(0).detach().cpu().numpy(),
             "q_quarter": quarter_up.mean(dim=1).squeeze(0).detach().cpu().numpy(),
-            "q_masked_vis": q_masked.detach().cpu().numpy(),
+            "q_masked_vis": q_masked.masked_fill(q_masked <= -1e8, float("nan")).detach().cpu().numpy(),
             "q_masked_flat": q_masked[q_masked > -1e8].detach().cpu().numpy(),
             "target_patch": q_raw.detach().cpu().numpy(),
             "feature_profile": q_raw.flatten().detach().cpu().numpy(),

@@ -9,7 +9,7 @@ from collections import deque
 
 from config import (
     TRAIN_MAP_SIZE,
-    TRAIN_MAX_MACRO_STEPS,
+    max_macro_steps_for,
     SENSOR_RANGE,
     SIGMA,
     MAP_GENERATOR,
@@ -111,12 +111,12 @@ def train_main():
     print("=== 正在启动多尺度空间强化学习 (Multi-Scale Spatial FCN RL) 仿真训练引擎 ===")
 
     map_size = TRAIN_MAP_SIZE
-    max_episodes = 50
-    max_macro_steps_per_epi = TRAIN_MAX_MACRO_STEPS
+    max_episodes = 120
+    max_macro_steps_per_epi = max_macro_steps_for(map_size)
     batch_size = 16
-    epsilon_start = 0.8
-    epsilon_end = 0.1
-    epsilon_decay = 0.95
+    epsilon_start = 1.0
+    epsilon_end = 0.08
+    epsilon_decay = 0.99
     experiment_name = f"spatial_fcn_rl_m{map_size}_{MAP_GENERATOR}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
