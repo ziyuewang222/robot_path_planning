@@ -114,5 +114,10 @@ def num_obstacles_for(map_size: int, base_count: int = NUM_OBSTACLES_BASE) -> in
 
 
 def max_macro_steps_for(map_size: int, base_steps: int = TRAIN_MAX_MACRO_STEPS) -> int:
-    """地图变大时，宏观步数上限按比例放大（探索面积增加，步数上限随之增加）"""
-    return int(base_steps * (map_size / TRAIN_MAP_SIZE) ** 2)
+    """宏观动作的最大执行步数随地图边长线性放大。
+
+    这样能避免大地图上目标尚未到达就被硬截断，同时又保留一个上限，
+    防止路径异常或局部振荡导致单次宏动作无限拖长。
+    """
+    scale = map_size / TRAIN_MAP_SIZE
+    return max(base_steps, int(round(base_steps * scale)))
