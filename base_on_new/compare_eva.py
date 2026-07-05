@@ -9,10 +9,13 @@
 2. 直接运行：
    python compare_eva.py
 
-3. 指定 RL 权重文件：
+3. 指定 RL 主干权重文件：
    python compare_eva.py --weights /path/to/your_checkpoint.pth
 
-4. 开启同屏双栏可视化（左 BFS，右 RL，同步推进，整个过程只创建一个窗口）：
+4. 指定融合权重文件（不指定则默认使用 latest）：
+   python compare_eva.py --fusion-weights /path/to/your_fusion_weights.pth
+
+5. 开启同屏双栏可视化（左 BFS，右 RL，同步推进，整个过程只创建一个窗口）：
    python compare_eva.py --vis
 
 说明
@@ -21,6 +24,7 @@
 - 两边是同步推进、连续刷新、同一个窗口内并排显示。
 - 不会逐步创建新窗口。
 - 你只需要改 `base_on_new/config.py` 里的测试配置，就能统一控制该脚本的地图尺寸和障碍生成逻辑。
+- RL 推理时会同时加载“主干权重 + fusion_weights”，其中融合权重默认使用 latest，也可以单独指定。
 """
 
 import argparse
@@ -33,7 +37,10 @@ import torch
 
 from bfs import BFSFrontierPlanner
 from config import (
+    BEST_CHECKPOINT_PATH,
+    BEST_FUSION_WEIGHTS_PATH,
     LATEST_CHECKPOINT_PATH,
+    LATEST_FUSION_WEIGHTS_PATH,
     MAP_GENERATOR,
     SENSOR_RANGE,
     SIGMA,
@@ -122,12 +129,16 @@ def _make_env():
     )
 
 
-def _load_rl_policy(weight_path: str, device):
+def _load_rl_policy(weight_path: str, fusion_weight_path: str, device):
     if not os.path.exists(weight_path):
-        raise FileNotFoundError(f"找不到权重文件: {weight_path}")
+        raise FileNotFoundError(f"找不到主干权重文件: {weight_path}")
+    if not os.path.exists(fusion_weight_path):
+        raise FileNotFoundError(f"找不到 fusion_weights 文件: {fusion_weight_path}")
+
     policy_net = SpatialFCN().to(device)
     state_dict = torch.load(weight_path, map_location=device)
     policy_net.load_state_dict(state_dict)
+    policy_net.load_fusion_weights(fusion_weight_path)
     policy_net.eval()
     return policy_net
 
@@ -146,7 +157,7 @@ def _step_one_policy(env, select_target_fn, total_steps: int, total_area: float)
     return total_steps, total_area, done, True
 
 
-def _run_comparison(weight_path: str, show_vis: bool):
+def _run_comparison(weight_path: str, fusion_weight_path: str, show_vis: bool):
     bfs_env = _make_env()
     rl_env = _make_env()
 
@@ -158,7 +169,7 @@ def _run_comparison(weight_path: str, show_vis: bool):
 
     bfs_planner = BFSFrontierPlanner()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    rl_policy = _load_rl_policy(weight_path, device)
+    rl_policy = _load_rl_policy(weight_path, fusion_weight_path, device)
     rl_pipeline = StateTensorPipeline(map_size=TEST_MAP_SIZE, sigma=SIGMA, device=device)
     rl_decision = SpatialActionDecision(rl_policy, epsilon=0.0, device=device)
 
@@ -283,16 +294,35 @@ def main():
         "--weights",
         type=str,
         default=str(LATEST_CHECKPOINT_PATH),
-        help="RL 权重文件路径，默认使用 artifacts/checkpoints/spatial_fcn_rl_latest.pth",
+        help="RL 主干权重文件路径，默认使用 latest",
+    )
+    parser.add_argument(
+        "--fusion-weights",
+        type=str,
+        default=str(LATEST_FUSION_WEIGHTS_PATH),
+        help="RL fusion_weights 文件路径，默认使用 latest",
+    )
+    parser.add_argument(
+        "--use-best",
+        action="store_true",
+        help="同时使用 best 主干权重和 best fusion_weights（会覆盖 --weights / --fusion-weights 默认值）",
     )
     parser.add_argument("--vis", action="store_true", help="开启同屏左右双栏可视化")
     args = parser.parse_args()
 
+    if args.use_best:
+        weight_path = str(BEST_CHECKPOINT_PATH)
+        fusion_weight_path = str(BEST_FUSION_WEIGHTS_PATH)
+    else:
+        weight_path = args.weights
+        fusion_weight_path = args.fusion_weights
+
     print("=== 开始同图对比评估 ===")
     print(f"测试地图: size={TEST_MAP_SIZE}, seed={TEST_SEED}, generator={MAP_GENERATOR}")
-    print(f"RL 权重: {args.weights}")
+    print(f"RL 主干权重: {weight_path}")
+    print(f"RL fusion_weights: {fusion_weight_path}")
 
-    bfs_result, rl_result = _run_comparison(args.weights, args.vis)
+    bfs_result, rl_result = _run_comparison(weight_path, fusion_weight_path, args.vis)
     _print_results(bfs_result, rl_result)
 
     if args.vis:

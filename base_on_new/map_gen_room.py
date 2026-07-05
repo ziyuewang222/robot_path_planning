@@ -24,11 +24,15 @@ def build(map_size):
     rooms = _generate_rooms(ground_truth, map_size)
     for room in rooms:
         _carve_room(ground_truth, room)
-    _connect_rooms(ground_truth, map_size, rooms)
+
+    room_graph = _connect_rooms(ground_truth, map_size, rooms)
     for room in rooms:
         _place_room_obstacles(ground_truth, room)
 
-    return ground_truth, {"rooms": rooms}
+    for room in rooms:
+        room.setdefault("degree", 0)
+
+    return ground_truth, {"rooms": rooms, "room_graph": room_graph}
 
 
 def sample_spawn(ground_truth, meta):
@@ -36,9 +40,13 @@ def sample_spawn(ground_truth, meta):
     if not rooms:
         raise RuntimeError("房间地图生成失败：未放置任何房间")
 
-    for _ in range(500):
-        room = rooms[np.random.randint(len(rooms))]
-        x, y, w, h = room
+    # 优先在双联通/多联通房间出生，避免默认落在只有单一通路的起始房间。
+    preferred_rooms = [room for room in rooms if room.get("degree", 0) >= 2]
+    candidate_rooms = preferred_rooms if preferred_rooms else rooms
+
+    for _ in range(800):
+        room = candidate_rooms[np.random.randint(len(candidate_rooms))]
+        x, y, w, h = room["bbox"]
         x_lo = x + 1 + SPAWN_MARGIN
         x_hi = x + w - SPAWN_MARGIN
         y_lo = y + 1 + SPAWN_MARGIN
@@ -51,7 +59,7 @@ def sample_spawn(ground_truth, meta):
         if np.all(ground_truth[px - 1:px + 2, py - 1:py + 2] == 0):
             return px, py
 
-    x, y, w, h = rooms[0]
+    x, y, w, h = candidate_rooms[0]["bbox"]
     return x + 1 + w // 2, y + 1 + h // 2
 
 
@@ -69,7 +77,7 @@ def _generate_rooms(ground_truth, map_size):
 
             x = np.random.randint(1, x_max + 1)
             y = np.random.randint(1, y_max + 1)
-            room = (x, y, w, h)
+            room = {"bbox": (x, y, w, h), "degree": 0, "neighbors": set()}
             if not _room_overlaps(room, rooms):
                 rooms.append(room)
                 break
@@ -77,7 +85,7 @@ def _generate_rooms(ground_truth, map_size):
 
 
 def _room_bbox(room):
-    x, y, w, h = room
+    x, y, w, h = room["bbox"]
     return x, y, x + w + 2, y + h + 2
 
 
@@ -92,20 +100,23 @@ def _room_overlaps(room, rooms):
 
 
 def _carve_room(ground_truth, room):
-    x, y, w, h = room
+    x, y, w, h = room["bbox"]
     ground_truth[x + 1:x + 1 + w, y + 1:y + 1 + h] = 0
 
 
 def _room_center(room):
-    x, y, w, h = room
+    x, y, w, h = room["bbox"]
     return x + 1 + w // 2, y + 1 + h // 2
 
 
 def _connect_rooms(ground_truth, map_size, rooms):
+    """先保证整体连通，再额外增加回路，让一个走廊可以连接多个房间。"""
     if len(rooms) < 2:
-        return
+        return []
 
     centers = [_room_center(room) for room in rooms]
+    edges = set()
+
     in_tree = {0}
     while len(in_tree) < len(rooms):
         best_dist = None
@@ -120,7 +131,39 @@ def _connect_rooms(ground_truth, map_size, rooms):
                     best_pair = (i, j)
         i, j = best_pair
         _carve_corridor(ground_truth, map_size, centers[i], centers[j])
+        rooms[i]["degree"] += 1
+        rooms[j]["degree"] += 1
+        rooms[i]["neighbors"].add(j)
+        rooms[j]["neighbors"].add(i)
+        edges.add(tuple(sorted((i, j))))
         in_tree.add(j)
+
+    # 额外添加一些边，形成双联通/多联通房间和走廊回路。
+    extra_edges = max(1, len(rooms) // 3)
+    candidates = []
+    for i in range(len(rooms)):
+        for j in range(i + 1, len(rooms)):
+            if (i, j) not in edges:
+                dist = abs(centers[i][0] - centers[j][0]) + abs(centers[i][1] - centers[j][1])
+                candidates.append((dist, i, j))
+    candidates.sort(key=lambda x: x[0])
+
+    added = 0
+    for _, i, j in candidates:
+        if added >= extra_edges:
+            break
+        # 限制额外连接的跨度，避免走廊过长破坏房间形态
+        if abs(centers[i][0] - centers[j][0]) + abs(centers[i][1] - centers[j][1]) > map_size // 2:
+            continue
+        _carve_corridor(ground_truth, map_size, centers[i], centers[j])
+        rooms[i]["degree"] += 1
+        rooms[j]["degree"] += 1
+        rooms[i]["neighbors"].add(j)
+        rooms[j]["neighbors"].add(i)
+        edges.add((i, j))
+        added += 1
+
+    return list(edges)
 
 
 def _carve_corridor(ground_truth, map_size, start, end):
@@ -150,7 +193,7 @@ def _carve_vertical_corridor(ground_truth, map_size, y1, y2, x, half):
 
 
 def _place_room_obstacles(ground_truth, room):
-    x, y, w, h = room
+    x, y, w, h = room["bbox"]
     n_obs = np.random.randint(OBSTACLES_PER_ROOM_MIN, OBSTACLES_PER_ROOM_MAX + 1)
     ix1 = x + 1 + OBSTACLE_WALL_MARGIN
     iy1 = y + 1 + OBSTACLE_WALL_MARGIN
