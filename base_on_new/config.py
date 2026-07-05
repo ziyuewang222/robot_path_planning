@@ -33,10 +33,10 @@ LEGACY_ROOT = PROJECT_ROOT / "legacy"
 LEGACY_CODE_DIR = LEGACY_ROOT / "prior_rubbish"
 
 # 训练集固定尺寸（训练权重时使用，改这一处即可）
-TRAIN_MAP_SIZE = 200
+TRAIN_MAP_SIZE = 100
 
 # 测试/部署地图尺寸（真实地图尺寸，改这一处即可）
-TEST_MAP_SIZE = 500
+TEST_MAP_SIZE = 200
 
 # 传感器视距（栅格），不随地图尺寸变化
 SENSOR_RANGE = 12

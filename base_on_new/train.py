@@ -111,7 +111,7 @@ def train_main():
     print("=== 正在启动多尺度空间强化学习 (Multi-Scale Spatial FCN RL) 仿真训练引擎 ===")
 
     map_size = TRAIN_MAP_SIZE
-    max_episodes = 100
+    max_episodes = 50
     max_macro_steps_per_epi = TRAIN_MAX_MACRO_STEPS
     batch_size = 16
     epsilon_start = 0.8
@@ -155,8 +155,15 @@ def train_main():
     pipeline = StateTensorPipeline(map_size=map_size, sigma=SIGMA, device=device)
     trainer = SpatialQTrainer(lr=3e-4, gamma=0.98, device=device)
 
+    # 训练开始先保存一份初始权重，方便你确认 run 目录下能立即看到文件。
+    trainer.save_all_weights(
+        str(CHECKPOINTS_DIR / "startup_checkpoint.pth"),
+        str(FUSION_WEIGHTS_DIR / "startup_fusion_weights.pth"),
+    )
+
     epsilon = epsilon_start
     best_reward = float("-inf")
+    best_run_reward = float("-inf")
 
     for episode in range(1, max_episodes + 1):
         explored, pos = env.reset()
@@ -209,12 +216,24 @@ def train_main():
         if total_reward > best_reward:
             best_reward = total_reward
             trainer.save_all_weights(str(BEST_CHECKPOINT_PATH), str(BEST_FUSION_WEIGHTS_PATH))
+            trainer.save_all_weights(
+                str(CHECKPOINTS_DIR / "best_checkpoint.pth"),
+                str(FUSION_WEIGHTS_DIR / "best_fusion_weights.pth"),
+            )
             print(f"--> 当前最优模型已更新，reward={best_reward:.2f}")
 
-    # 训练结束后只保存一次最终权重，避免频繁落盘导致文件过多。
+        best_run_reward = max(best_run_reward, total_reward)
+
+    # 训练结束后更新全局 latest，并在 run 目录下保留最终版本。
     trainer.save_all_weights(str(LATEST_CHECKPOINT_PATH), str(LATEST_FUSION_WEIGHTS_PATH))
+    trainer.save_all_weights(
+        str(CHECKPOINTS_DIR / "final_checkpoint.pth"),
+        str(FUSION_WEIGHTS_DIR / "final_fusion_weights.pth"),
+    )
     print(f"--> 训练结束，最终主干权重已保存到: {LATEST_CHECKPOINT_PATH}")
     print(f"--> 训练结束，最终参考融合权重已保存到: {LATEST_FUSION_WEIGHTS_PATH}")
+    print(f"--> run 目录最终主干权重: {CHECKPOINTS_DIR / 'final_checkpoint.pth'}")
+    print(f"--> run 目录最终参考融合权重: {FUSION_WEIGHTS_DIR / 'final_fusion_weights.pth'}")
 
 
 if __name__ == "__main__":

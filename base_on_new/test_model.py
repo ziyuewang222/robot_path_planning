@@ -1,10 +1,12 @@
 import time
-import torch
+
 import matplotlib.pyplot as plt
-from config import TRAIN_MAP_SIZE, TEST_MAP_SIZE, SENSOR_RANGE, SIGMA, MAP_GENERATOR
+import torch
+
+from config import MAP_GENERATOR, SENSOR_RANGE, SIGMA, TEST_MAP_SIZE, TRAIN_MAP_SIZE
 from grid_env import GridWorldEnv
+from models import SpatialActionDecision, SpatialFCN
 from state_pipeline import StateTensorPipeline
-from models import SpatialFCN, SpatialActionDecision
 
 
 def test_scale_invariance():

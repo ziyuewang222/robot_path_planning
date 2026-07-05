@@ -94,7 +94,7 @@ class MultiScaleSpatialFCN(nn.Module):
             raise KeyError("权重文件中未找到 scale_fusion_logits")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        b, _, h, w = x.shape
+        _, _, h, w = x.shape
 
         # 原始分辨率路径
         full_feat = self.full_res_branch(x)
