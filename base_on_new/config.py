@@ -33,10 +33,10 @@ LEGACY_ROOT = PROJECT_ROOT / "legacy"
 LEGACY_CODE_DIR = LEGACY_ROOT / "prior_rubbish"
 
 # 训练集固定尺寸（训练权重时使用，改这一处即可）
-TRAIN_MAP_SIZE = 300
+TRAIN_MAP_SIZE = 200
 
 # 测试/部署地图尺寸（真实地图尺寸，改这一处即可）
-TEST_MAP_SIZE = 500
+TEST_MAP_SIZE = 300
 
 # 传感器视距（栅格），不随地图尺寸变化
 SENSOR_RANGE = 12
@@ -44,8 +44,8 @@ SENSOR_RANGE = 12
 # 状态张量中小车高斯热力图的 sigma，不随地图尺寸变化
 SIGMA = 3.0
 
-TRAIN_MAX_MACRO_STEPS = 120
-TEST_SEED = 888
+TRAIN_MAX_MACRO_STEPS = 60
+TEST_SEED = 890
 
 # 地图生成器：运行前修改此项切换逻辑
 #   "room"   -> 房间 + 走廊 + 房间内零星障碍物
@@ -63,6 +63,9 @@ ROOM_MAX_SIZE = 32
 ROOM_PADDING = 3
 ROOM_PLACE_ATTEMPTS = 200
 ROOMS_BASE_COUNT = 4
+ROOM_OBSERVABLE_AREA_RATIO = 0.16
+ROOM_GENERATION_ATTEMPTS = 80
+ROOM_AREA_ADJUST_ATTEMPTS = 300
 
 OBS_MIN_SIZE = 2
 OBS_MAX_SIZE = 4
@@ -113,11 +116,13 @@ def num_obstacles_for(map_size: int, base_count: int = NUM_OBSTACLES_BASE) -> in
     return int(base_count * map_size / MAP_TEMPLATE_SIZE)
 
 
-def max_macro_steps_for(map_size: int, base_steps: int = TRAIN_MAX_MACRO_STEPS) -> int:
-    """宏观动作的最大执行步数随地图边长线性放大。
+def max_episodes_for(map_size: int, base_size: int = 100, base_episodes: int = 60) -> int:
+    """训练 Episode 数随地图边长线性放大，100 尺寸对应 60 次。"""
+    scale = map_size / base_size
+    return max(base_episodes, int(round(base_episodes * scale)))
 
-    这样能避免大地图上目标尚未到达就被硬截断，同时又保留一个上限，
-    防止路径异常或局部振荡导致单次宏动作无限拖长。
-    """
-    scale = map_size / TRAIN_MAP_SIZE
+
+def max_macro_steps_for(map_size: int, base_size: int = 100, base_steps: int = TRAIN_MAX_MACRO_STEPS) -> int:
+    """每个 Episode 的最大宏动作数随地图边长线性放大，100 尺寸对应 60 步。"""
+    scale = map_size / base_size
     return max(base_steps, int(round(base_steps * scale)))
