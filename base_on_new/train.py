@@ -1,11 +1,7 @@
 import json
-import random
 from datetime import datetime
 
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from collections import deque
 
 from config import (
     TRAIN_MAP_SIZE,
@@ -26,86 +22,15 @@ from config import (
     BEST_CHECKPOINT_PATH,
     LATEST_FUSION_WEIGHTS_PATH,
     BEST_FUSION_WEIGHTS_PATH,
+    AREA_REWARD_SCALE,
+    STEP_PENALTY,
+    COLLISION_PENALTY,
+    SUCCESS_BONUS_PER_AREA,
 )
 from grid_env import GridWorldEnv
 from state_pipeline import StateTensorPipeline
-from models import SpatialFCN, SpatialActionDecision
-
-
-class SMDPReplayBuffer:
-    def __init__(self, capacity=1000):
-        self.buffer = deque(maxlen=capacity)
-
-    def push(self, state, action_coord, reward, next_state, next_mask, done, tau_steps):
-        self.buffer.append((state, action_coord, reward, next_state, next_mask, done, tau_steps))
-
-    def sample(self, batch_size):
-        return random.sample(self.buffer, batch_size)
-
-    def __len__(self):
-        return len(self.buffer)
-
-
-class SpatialQTrainer:
-    def __init__(self, lr=1e-4, gamma=0.99, buffer_size=2000, device='cpu'):
-        self.device = device
-        self.gamma = gamma
-
-        # 主干网络参数与“参考权重”一起训练；其中参考权重保存在 scale_fusion_logits 中。
-        self.policy_net = SpatialFCN().to(device)
-        self.target_net = SpatialFCN().to(device)
-        self.target_net.load_state_dict(self.policy_net.state_dict())
-        self.target_net.eval()
-
-        self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
-        self.criterion = nn.MSELoss()
-        self.memory = SMDPReplayBuffer(capacity=buffer_size)
-
-    def update_step(self, batch_size=16):
-        if len(self.memory) < batch_size:
-            return 0.0
-
-        transitions = self.memory.sample(batch_size)
-        loss_val = 0.0
-
-        self.optimizer.zero_grad()
-
-        for state, action_coord, reward, next_state, next_mask, done, tau in transitions:
-            state = state.unsqueeze(0).to(self.device)
-            next_state = next_state.unsqueeze(0).to(self.device)
-            next_mask = next_mask.to(self.device)
-
-            q_raw = self.policy_net(state).squeeze(0).squeeze(0)
-            pred_q = q_raw[action_coord[0], action_coord[1]]
-
-            with torch.no_grad():
-                if done:
-                    target_q = torch.tensor(reward, dtype=torch.float32, device=self.device)
-                else:
-                    q_next_raw = self.target_net(next_state).squeeze(0).squeeze(0)
-                    q_next_masked = q_next_raw.clone()
-                    q_next_masked[next_mask < 0.5] = -1e9
-
-                    max_next_q = torch.max(q_next_masked)
-                    gamma_tau = self.gamma ** tau
-                    target_q = reward + gamma_tau * max_next_q
-
-            loss = self.criterion(pred_q, target_q)
-            loss.backward()
-            loss_val += loss.item()
-
-        nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
-        self.optimizer.step()
-
-        return loss_val / batch_size
-
-    def soft_update_target(self, tau=0.01):
-        for target_param, policy_param in zip(self.target_net.parameters(), self.policy_net.parameters()):
-            target_param.data.copy_(tau * policy_param.data + (1.0 - tau) * target_param.data)
-
-    def save_all_weights(self, checkpoint_path: str, fusion_weight_path: str) -> None:
-        torch.save(self.policy_net.state_dict(), checkpoint_path)
-        self.policy_net.save_fusion_weights(fusion_weight_path)
+from models import SpatialActionDecision
+from trainer_core import SpatialQTrainer
 
 
 def train_main():
@@ -115,6 +40,8 @@ def train_main():
     max_episodes = max_episodes_for(map_size)
     max_macro_steps_per_epi = max_macro_steps_for(map_size)
     batch_size = 16
+    update_every = 4
+    success_bonus = SUCCESS_BONUS_PER_AREA * (map_size ** 2)
     epsilon_start = 1.0
     epsilon_end = 0.1
     epsilon_converge_episode = max(1, int(round(max_episodes * 0.3)))
@@ -140,6 +67,12 @@ def train_main():
         "max_episodes": max_episodes,
         "max_macro_steps_per_epi": max_macro_steps_per_epi,
         "batch_size": batch_size,
+        "update_every": update_every,
+        "area_reward_scale": AREA_REWARD_SCALE,
+        "step_penalty": STEP_PENALTY,
+        "collision_penalty": COLLISION_PENALTY,
+        "success_bonus": success_bonus,
+        "success_bonus_per_area": SUCCESS_BONUS_PER_AREA,
         "epsilon_start": epsilon_start,
         "epsilon_end": epsilon_end,
         "epsilon_converge_episode": epsilon_converge_episode,
@@ -173,6 +106,7 @@ def train_main():
     best_reward = float("-inf")
     best_run_reward = float("-inf")
     completed_episodes = 0
+    global_macro_step = 0
 
     final_training_end_reason = f"已完成预设最大 Episode 数量: {max_episodes}"
 
@@ -189,10 +123,13 @@ def train_main():
         steps = 0
         free_square = 0
         delta_area_sum = 0.0
+        collision_count = 0
+        blocked_count = 0
         macro_step = 0
 
         for macro_step in range(1, max_macro_steps_per_epi + 1):
-            action_coord, _, _ = decision.select_action(state, explore=True)
+            global_macro_step += 1
+            action_coord, _, _ = decision.select_action(state, explore=True, return_maps=False)
             if action_coord is None:
                 episode_end_reason = "没有可选择的有效探索目标"
                 break
@@ -200,19 +137,25 @@ def train_main():
             next_explored, next_pos, reward, tau_steps, done, info = env.step_macro(action_coord)
             steps += tau_steps
             delta_area_sum += info.get("delta_area", 0.0)
+            if info.get("collision"):
+                collision_count += 1
+            if info.get("blocked"):
+                blocked_count += 1
 
             free_square = int((next_explored == 0).sum())
             if done:
-                finish_bonus = delta_area_sum * 0.3 - (steps - delta_area_sum) * 0.1
-                reward += max(0.0, finish_bonus)
+                reward += success_bonus
 
             next_state = pipeline.process(next_explored, next_pos)
             next_mask = next_state[2]
 
             trainer.memory.push(state.cpu(), action_coord, reward, next_state.cpu(), next_mask.cpu(), done, tau_steps)
 
-            loss = trainer.update_step(batch_size=batch_size)
-            trainer.soft_update_target(tau=0.02)
+            loss = 0.0
+            if global_macro_step % update_every == 0:
+                loss = trainer.update_step(batch_size=batch_size)
+                if loss > 0:
+                    trainer.soft_update_target(tau=0.02)
 
             state = next_state
             total_reward += reward
@@ -231,7 +174,7 @@ def train_main():
         epsilon = max(epsilon_end, epsilon * epsilon_decay)
         avg_loss = (total_loss / update_cnt) if update_cnt > 0 else 0.0
 
-        print(f"Episode [{episode:02d}/{max_episodes:02d}] | 累积物理回报: {total_reward:7.2f} | 探索率(eps): {epsilon:.3f} | 平均 MSE 损失: {avg_loss:.4f} | steps: {steps:4d} | free_square: {free_square:4d} | delta_area_sum: {delta_area_sum:7.1f} | 结束原因: {episode_end_reason}")
+        print(f"Episode [{episode:02d}/{max_episodes:02d}] | 累积物理回报: {total_reward:7.2f} | 探索率(eps): {epsilon:.3f} | 平均 MSE 损失: {avg_loss:.4f} | steps: {steps:4d} | free_square: {free_square:4d} | delta_area_sum: {delta_area_sum:7.1f} | collision: {collision_count:2d} | blocked: {blocked_count:2d} | 结束原因: {episode_end_reason}")
 
         log_line = {
             "episode": episode,
@@ -241,6 +184,8 @@ def train_main():
             "steps": steps,
             "free_square": free_square,
             "delta_area_sum": delta_area_sum,
+            "collision_count": collision_count,
+            "blocked_count": blocked_count,
             "macro_steps": macro_step,
             "end_reason": episode_end_reason,
         }
@@ -248,6 +193,12 @@ def train_main():
             f.write(json.dumps(log_line, ensure_ascii=False) + "\n")
 
         completed_episodes = episode
+
+        trainer.save_all_weights(str(LATEST_CHECKPOINT_PATH), str(LATEST_FUSION_WEIGHTS_PATH))
+        trainer.save_all_weights(
+            str(CHECKPOINTS_DIR / "latest_checkpoint.pth"),
+            str(FUSION_WEIGHTS_DIR / "latest_fusion_weights.pth"),
+        )
 
         if total_reward > best_reward:
             best_reward = total_reward
@@ -260,7 +211,7 @@ def train_main():
 
         best_run_reward = max(best_run_reward, total_reward)
 
-    # 训练结束后更新全局 latest，并在 run 目录下保留最终版本。
+    # 训练结束后，run 目录内会保留 startup / best / latest 三类权重。
     print(
         f"--> 训练结束原因: {final_training_end_reason}；"
         f"实际完成 Episode 数: {completed_episodes}/{max_episodes}；"
@@ -268,13 +219,13 @@ def train_main():
     )
     trainer.save_all_weights(str(LATEST_CHECKPOINT_PATH), str(LATEST_FUSION_WEIGHTS_PATH))
     trainer.save_all_weights(
-        str(CHECKPOINTS_DIR / "final_checkpoint.pth"),
-        str(FUSION_WEIGHTS_DIR / "final_fusion_weights.pth"),
+        str(CHECKPOINTS_DIR / "latest_checkpoint.pth"),
+        str(FUSION_WEIGHTS_DIR / "latest_fusion_weights.pth"),
     )
-    print(f"--> 训练结束，最终主干权重已保存到: {LATEST_CHECKPOINT_PATH}")
-    print(f"--> 训练结束，最终参考融合权重已保存到: {LATEST_FUSION_WEIGHTS_PATH}")
-    print(f"--> run 目录最终主干权重: {CHECKPOINTS_DIR / 'final_checkpoint.pth'}")
-    print(f"--> run 目录最终参考融合权重: {FUSION_WEIGHTS_DIR / 'final_fusion_weights.pth'}")
+    print(f"--> 训练结束，latest 主干权重已保存到: {LATEST_CHECKPOINT_PATH}")
+    print(f"--> 训练结束，latest 参考融合权重已保存到: {LATEST_FUSION_WEIGHTS_PATH}")
+    print(f"--> run 目录 latest 主干权重: {CHECKPOINTS_DIR / 'latest_checkpoint.pth'}")
+    print(f"--> run 目录 latest 参考融合权重: {FUSION_WEIGHTS_DIR / 'latest_fusion_weights.pth'}")
 
 
 if __name__ == "__main__":

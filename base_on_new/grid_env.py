@@ -1,7 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from local_planner import AStarPlanner
-from config import SENSOR_RANGE, MAP_GENERATOR
+from config import (
+    SENSOR_RANGE,
+    MAP_GENERATOR,
+    AREA_REWARD_SCALE,
+    STEP_PENALTY,
+    COLLISION_PENALTY,
+)
 from map_generator import build_map, sample_spawn
 
 
@@ -69,7 +75,14 @@ class GridWorldEnv:
         self._update_fov_bresenham()
         return self.explored_map.copy(), self.robot_pos.copy(), collision
 
-    def step_macro(self, target_coord, max_steps=40, penalty_step=0.1, penalty_collision=10.0):
+    def step_macro(
+        self,
+        target_coord,
+        max_steps=40,
+        area_reward_scale=AREA_REWARD_SCALE,
+        penalty_step=STEP_PENALTY,
+        penalty_collision=COLLISION_PENALTY,
+    ):
         area_before = np.sum(self.explored_map != -1)
 
         n_steps = 0
@@ -109,7 +122,7 @@ class GridWorldEnv:
         area_after = np.sum(self.explored_map != -1)
         delta_area = float(area_after - area_before)
 
-        macro_reward = delta_area - (penalty_step * n_steps)
+        macro_reward = area_reward_scale * delta_area - penalty_step * n_steps
         if collision_occurred or path_blocked:
             macro_reward -= penalty_collision
 

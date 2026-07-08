@@ -1,13 +1,13 @@
 """
 使用方法
 
-1. 默认使用 `config.py` 中的 latest 权重进行评估：
+1. 默认使用 `config.py` 中的 TEST_CHECKPOINT_PATH 和 TEST_FUSION_WEIGHTS_PATH 进行评估：
    python eval_policy.py
 
 2. 指定主干权重和融合权重：
    python eval_policy.py --weights /path/to/checkpoint.pth --fusion-weights /path/to/fusion.pth
 
-3. 只指定主干权重，融合权重仍默认使用 latest：
+3. 只指定主干权重，融合权重仍默认使用 TEST_FUSION_WEIGHTS_PATH：
    python eval_policy.py --weights /path/to/checkpoint.pth
 
 4. 指定使用 best：
@@ -25,8 +25,8 @@ import torch.nn.functional as F
 from config import (
     BEST_CHECKPOINT_PATH,
     BEST_FUSION_WEIGHTS_PATH,
-    LATEST_CHECKPOINT_PATH,
-    LATEST_FUSION_WEIGHTS_PATH,
+    TEST_CHECKPOINT_PATH,
+    TEST_FUSION_WEIGHTS_PATH,
     MAP_GENERATOR,
     SENSOR_RANGE,
     TEST_MAP_SIZE,
@@ -322,8 +322,8 @@ def evaluate_model(weight_path, fusion_weight_path):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Inspect RL policy internals with visualization")
-    parser.add_argument("--weights", type=str, default=str(LATEST_CHECKPOINT_PATH))
-    parser.add_argument("--fusion-weights", type=str, default=str(LATEST_FUSION_WEIGHTS_PATH))
+    parser.add_argument("--weights", type=str, default=str(TEST_CHECKPOINT_PATH))
+    parser.add_argument("--fusion-weights", type=str, default=str(TEST_FUSION_WEIGHTS_PATH))
     parser.add_argument("--use-best", action="store_true")
     args = parser.parse_args()
     weight_path, fusion_weight_path = _resolve_paths(args)

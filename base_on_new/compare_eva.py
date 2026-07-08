@@ -1,7 +1,7 @@
 """
 使用方法
 
-1. 默认对比 BFS 与 RL，并使用 `config.py` 中的测试地图参数：
+1. 默认对比 BFS 与 RL，并使用 `config.py` 中的测试地图参数和测试权重路径：
    python compare_eva.py
 
 2. 指定 RL 主干权重文件：
@@ -19,8 +19,8 @@ import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 
-from bfs import BFSFrontierPlanner
-from config import BEST_CHECKPOINT_PATH, BEST_FUSION_WEIGHTS_PATH, LATEST_CHECKPOINT_PATH, LATEST_FUSION_WEIGHTS_PATH, MAP_GENERATOR, SENSOR_RANGE, TEST_MAP_SIZE, TEST_SEED
+from bfs import BFSFrontierPlanner, max_bfs_compare_rounds
+from config import BEST_CHECKPOINT_PATH, BEST_FUSION_WEIGHTS_PATH, TEST_CHECKPOINT_PATH, TEST_FUSION_WEIGHTS_PATH, MAP_GENERATOR, SENSOR_RANGE, TEST_MAP_SIZE, TEST_SEED
 from grid_env import GridWorldEnv
 from rl_runtime import RLRuntime
 
@@ -93,6 +93,7 @@ def _run_comparison(weight_path: str, fusion_weight_path: str, show_vis: bool):
     bfs_alive = True
     bfs_round = 0
     bfs_target = None
+    bfs_end_reason = "达到最大对比轮数仍未完成 95% 探索"
 
     rl_total_steps = 0
     rl_total_area = 0.0
@@ -102,7 +103,7 @@ def _run_comparison(weight_path: str, fusion_weight_path: str, show_vis: bool):
     rl_target = None
 
     visualizer = DualMapVisualizer(TEST_MAP_SIZE) if show_vis else None
-    max_rounds = rl_runtime.max_rounds * 2
+    max_rounds = max_bfs_compare_rounds(TEST_MAP_SIZE)
     try:
         for step_idx in range(1, max_rounds + 1):
             if bfs_alive and not bfs_done:
@@ -110,9 +111,12 @@ def _run_comparison(weight_path: str, fusion_weight_path: str, show_vis: bool):
                     bfs_target = bfs_planner.find_nearest_frontier(bfs_env.explored_map, bfs_env.robot_pos)
                     if bfs_target is None:
                         bfs_alive = False
+                        bfs_end_reason = "BFS 找不到可达 frontier，但尚未达到 95% 探索"
                 if bfs_target is not None:
                     bfs_total_steps, bfs_total_area, bfs_done, info = _step_one_policy(bfs_env, bfs_target, bfs_total_steps, bfs_total_area)
                     bfs_round = step_idx
+                    if bfs_done:
+                        bfs_end_reason = "BFS 已达到 95% 探索"
                     reached = (bfs_env.robot_pos[0] == bfs_target[0] and bfs_env.robot_pos[1] == bfs_target[1])
                     if reached or (info["blocked"] and not reached):
                         bfs_target = None
@@ -138,19 +142,21 @@ def _run_comparison(weight_path: str, fusion_weight_path: str, show_vis: bool):
         if visualizer is not None:
             visualizer.close()
 
-    return ("BFS", bfs_total_steps, bfs_total_area, bfs_done, bfs_round), ("RL", rl_total_steps, rl_total_area, rl_done, rl_round)
+    return ("BFS", bfs_total_steps, bfs_total_area, bfs_done, bfs_round, bfs_end_reason), ("RL", rl_total_steps, rl_total_area, rl_done, rl_round, "")
 
 
 def _print_results(bfs_result, rl_result):
     print("\n=== 对比结果 ===")
     for res in (bfs_result, rl_result):
         print(f"{res[0]:>3} | steps={res[1]:4d} | area={res[2]:7.1f} | done={res[3]} | rounds={res[4]}")
+    if not bfs_result[3]:
+        print(f"BFS done=False 原因: {bfs_result[5]}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Compare BFS baseline with RL policy on the same test map")
-    parser.add_argument("--weights", type=str, default=str(LATEST_CHECKPOINT_PATH))
-    parser.add_argument("--fusion-weights", type=str, default=str(LATEST_FUSION_WEIGHTS_PATH))
+    parser.add_argument("--weights", type=str, default=str(TEST_CHECKPOINT_PATH))
+    parser.add_argument("--fusion-weights", type=str, default=str(TEST_FUSION_WEIGHTS_PATH))
     parser.add_argument("--use-best", action="store_true")
     parser.add_argument("--vis", action="store_true")
     args = parser.parse_args()

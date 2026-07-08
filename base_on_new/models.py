@@ -140,27 +140,29 @@ class SpatialActionDecision:
         self.epsilon = epsilon
         self.device = device
 
-    def select_action(self, state_tensor, explore=True):
+    def select_action(self, state_tensor, explore=True, return_maps=True):
         self.model.eval()
-        state_batch = state_tensor.unsqueeze(0).to(self.device)
-
-        with torch.no_grad():
-            q_raw = self.model(state_batch).squeeze(0).squeeze(0)
-
         mask = state_tensor[2].to(self.device)
-        q_masked = q_raw.clone()
-        q_masked[mask < 0.5] = -1e9
-
         valid_indices = torch.nonzero(mask > 0.5)
         if len(valid_indices) == 0:
-            return None, q_masked.cpu().numpy(), q_raw.cpu().numpy()
+            return None, None, None
 
         if explore and np.random.rand() < self.epsilon:
             random_idx = np.random.randint(0, len(valid_indices))
             chosen_coord = valid_indices[random_idx].tolist()
-        else:
-            flat_idx = torch.argmax(q_masked).item()
-            _, W = q_masked.shape
-            chosen_coord = [flat_idx // W, flat_idx % W]
+            return chosen_coord, None, None
 
+        state_batch = state_tensor.unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            q_raw = self.model(state_batch).squeeze(0).squeeze(0)
+
+        q_masked = q_raw.clone()
+        q_masked[mask < 0.5] = -1e9
+
+        flat_idx = torch.argmax(q_masked).item()
+        _, W = q_masked.shape
+        chosen_coord = [flat_idx // W, flat_idx % W]
+
+        if not return_maps:
+            return chosen_coord, None, None
         return chosen_coord, q_masked.cpu().numpy(), q_raw.cpu().numpy()

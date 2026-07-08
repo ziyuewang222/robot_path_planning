@@ -1,0 +1,261 @@
+import json
+from datetime import datetime
+from pathlib import Path
+
+import torch
+
+from config import (
+    TRAIN_MAP_SIZE,
+    max_episodes_for,
+    max_macro_steps_for,
+    SENSOR_RANGE,
+    SIGMA,
+    MAP_GENERATOR,
+    CHECKPOINTS_DIR,
+    CHECKPOINTS_ROOT,
+    FUSION_WEIGHTS_DIR,
+    FUSION_WEIGHTS_ROOT,
+    LOGS_DIR,
+    METRICS_DIR,
+    CONFIG_SNAPSHOTS_DIR,
+    CURRENT_RUN_DIR,
+    LATEST_CHECKPOINT_PATH,
+    BEST_CHECKPOINT_PATH,
+    LATEST_FUSION_WEIGHTS_PATH,
+    BEST_FUSION_WEIGHTS_PATH,
+    AREA_REWARD_SCALE,
+    STEP_PENALTY,
+    COLLISION_PENALTY,
+    SUCCESS_BONUS_PER_AREA,
+    DERIVED_INITIAL_CHECKPOINT_PATH,
+    DERIVED_INITIAL_FUSION_WEIGHTS_PATH,
+    DERIVED_EPSILON_START,
+    DERIVED_EPSILON_END,
+    DERIVED_EPSILON_CONVERGE_RATIO,
+)
+from grid_env import GridWorldEnv
+from state_pipeline import StateTensorPipeline
+from models import SpatialActionDecision
+from trainer_core import SpatialQTrainer
+
+
+def _path_or_none(path):
+    if path is None:
+        return None
+    path = Path(path)
+    return path if str(path) else None
+
+
+def derived_train_main():
+    print("=== 正在启动派生策略训练 (Derived Multi-Scale Spatial FCN RL) ===")
+
+    initial_checkpoint_path = _path_or_none(DERIVED_INITIAL_CHECKPOINT_PATH)
+    initial_fusion_weights_path = _path_or_none(DERIVED_INITIAL_FUSION_WEIGHTS_PATH)
+    if initial_checkpoint_path is None and initial_fusion_weights_path is None:
+        raise ValueError("derived_train.py 需要至少配置一个初始权重路径")
+
+    map_size = TRAIN_MAP_SIZE
+    max_episodes = max_episodes_for(map_size)
+    max_macro_steps_per_epi = max_macro_steps_for(map_size)
+    batch_size = 16
+    success_bonus = SUCCESS_BONUS_PER_AREA * (map_size ** 2)
+    epsilon_start = DERIVED_EPSILON_START
+    epsilon_end = DERIVED_EPSILON_END
+    epsilon_converge_ratio = DERIVED_EPSILON_CONVERGE_RATIO
+    epsilon_converge_episode = max(1, int(round(max_episodes * epsilon_converge_ratio)))
+    epsilon_decay = (epsilon_end / epsilon_start) ** (1.0 / epsilon_converge_episode)
+    experiment_name = f"derived_spatial_fcn_rl_m{map_size}_{MAP_GENERATOR}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"当前使用的底层计算加速设备: {device}")
+
+    CURRENT_RUN_DIR.mkdir(parents=True, exist_ok=True)
+    CHECKPOINTS_DIR.mkdir(parents=True, exist_ok=True)
+    FUSION_WEIGHTS_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    METRICS_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+    CHECKPOINTS_ROOT.mkdir(parents=True, exist_ok=True)
+    FUSION_WEIGHTS_ROOT.mkdir(parents=True, exist_ok=True)
+
+    print(f"本次实验名: {experiment_name}")
+    print(f"输出目录: {CURRENT_RUN_DIR}")
+    print(f"目标地图生成器: {MAP_GENERATOR}")
+    print(f"初始主策略权重: {initial_checkpoint_path}")
+    print(f"初始融合权重: {initial_fusion_weights_path}")
+    print(
+        f"训练地图尺寸: {map_size} | 最大 Episode 数: {max_episodes} | "
+        f"epsilon 将在前 {epsilon_converge_episode} 个 Episode 从 {epsilon_start:.2f} 下降到 {epsilon_end:.2f}"
+    )
+
+    env = GridWorldEnv(map_size=map_size, sensor_range=SENSOR_RANGE, map_generator=MAP_GENERATOR)
+    pipeline = StateTensorPipeline(map_size=map_size, sigma=SIGMA, device=device)
+    trainer = SpatialQTrainer(lr=3e-4, gamma=0.98, device=device)
+    initial_policy_mode = trainer.load_initial_policy(
+        checkpoint_path=initial_checkpoint_path,
+        fusion_weight_path=initial_fusion_weights_path,
+    )
+    print(f"初始策略加载模式: {initial_policy_mode}")
+
+    run_meta = {
+        "experiment_name": experiment_name,
+        "train_mode": "derived",
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "map_size": map_size,
+        "max_episodes": max_episodes,
+        "max_macro_steps_per_epi": max_macro_steps_per_epi,
+        "batch_size": batch_size,
+        "area_reward_scale": AREA_REWARD_SCALE,
+        "step_penalty": STEP_PENALTY,
+        "collision_penalty": COLLISION_PENALTY,
+        "success_bonus": success_bonus,
+        "success_bonus_per_area": SUCCESS_BONUS_PER_AREA,
+        "epsilon_start": epsilon_start,
+        "epsilon_end": epsilon_end,
+        "epsilon_converge_episode": epsilon_converge_episode,
+        "epsilon_converge_ratio": epsilon_converge_ratio,
+        "epsilon_decay": epsilon_decay,
+        "device": str(device),
+        "map_generator": MAP_GENERATOR,
+        "model_type": "MultiScaleSpatialFCN",
+        "initial_policy_mode": initial_policy_mode,
+        "initial_checkpoint_path": str(initial_checkpoint_path) if initial_checkpoint_path else None,
+        "initial_fusion_weights_path": str(initial_fusion_weights_path) if initial_fusion_weights_path else None,
+    }
+    with open(CONFIG_SNAPSHOTS_DIR / "train_config.json", "w", encoding="utf-8") as f:
+        json.dump(run_meta, f, ensure_ascii=False, indent=2)
+
+    trainer.save_all_weights(
+        str(CHECKPOINTS_DIR / "startup_checkpoint.pth"),
+        str(FUSION_WEIGHTS_DIR / "startup_fusion_weights.pth"),
+    )
+
+    epsilon = epsilon_start
+    best_reward = float("-inf")
+    best_run_reward = float("-inf")
+    completed_episodes = 0
+
+    final_training_end_reason = f"已完成预设最大 Episode 数量: {max_episodes}"
+
+    for episode in range(1, max_episodes + 1):
+        explored, pos = env.reset()
+        state = pipeline.process(explored, pos)
+
+        decision = SpatialActionDecision(trainer.policy_net, epsilon=epsilon, device=device)
+
+        total_reward = 0.0
+        total_loss = 0.0
+        update_cnt = 0
+        episode_end_reason = "达到本回合最大宏步数限制"
+        steps = 0
+        free_square = 0
+        delta_area_sum = 0.0
+        collision_count = 0
+        blocked_count = 0
+        macro_step = 0
+
+        for macro_step in range(1, max_macro_steps_per_epi + 1):
+            action_coord, _, _ = decision.select_action(state, explore=True)
+            if action_coord is None:
+                episode_end_reason = "没有可选择的有效探索目标"
+                break
+
+            next_explored, next_pos, reward, tau_steps, done, info = env.step_macro(action_coord)
+            steps += tau_steps
+            delta_area_sum += info.get("delta_area", 0.0)
+            if info.get("collision"):
+                collision_count += 1
+            if info.get("blocked"):
+                blocked_count += 1
+
+            free_square = int((next_explored == 0).sum())
+            if done:
+                reward += success_bonus
+
+            next_state = pipeline.process(next_explored, next_pos)
+            next_mask = next_state[2]
+
+            trainer.memory.push(state.cpu(), action_coord, reward, next_state.cpu(), next_mask.cpu(), done, tau_steps)
+
+            loss = trainer.update_step(batch_size=batch_size)
+            trainer.soft_update_target(tau=0.02)
+
+            state = next_state
+            total_reward += reward
+            if loss > 0:
+                total_loss += loss
+                update_cnt += 1
+
+            if done:
+                episode_end_reason = "已探索至少 95% 的可通行自由空间"
+                break
+            if info.get("collision"):
+                episode_end_reason = "宏动作执行中发生碰撞"
+            elif info.get("blocked"):
+                episode_end_reason = "目标路径不可达或目标被确认为障碍物"
+
+        epsilon = max(epsilon_end, epsilon * epsilon_decay)
+        avg_loss = (total_loss / update_cnt) if update_cnt > 0 else 0.0
+
+        print(
+            f"Episode [{episode:02d}/{max_episodes:02d}] | 累积物理回报: {total_reward:7.2f} | "
+            f"探索率(eps): {epsilon:.3f} | 平均 MSE 损失: {avg_loss:.4f} | steps: {steps:4d} | "
+            f"free_square: {free_square:4d} | delta_area_sum: {delta_area_sum:7.1f} | "
+            f"collision: {collision_count:2d} | blocked: {blocked_count:2d} | 结束原因: {episode_end_reason}"
+        )
+
+        log_line = {
+            "episode": episode,
+            "reward": total_reward,
+            "avg_loss": avg_loss,
+            "epsilon": epsilon,
+            "steps": steps,
+            "free_square": free_square,
+            "delta_area_sum": delta_area_sum,
+            "collision_count": collision_count,
+            "blocked_count": blocked_count,
+            "macro_steps": macro_step,
+            "end_reason": episode_end_reason,
+            "train_mode": "derived",
+            "initial_policy_mode": initial_policy_mode,
+        }
+        with open(LOGS_DIR / "train_progress.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_line, ensure_ascii=False) + "\n")
+
+        completed_episodes = episode
+
+        trainer.save_all_weights(str(LATEST_CHECKPOINT_PATH), str(LATEST_FUSION_WEIGHTS_PATH))
+        trainer.save_all_weights(
+            str(CHECKPOINTS_DIR / "latest_checkpoint.pth"),
+            str(FUSION_WEIGHTS_DIR / "latest_fusion_weights.pth"),
+        )
+
+        if total_reward > best_reward:
+            best_reward = total_reward
+            trainer.save_all_weights(str(BEST_CHECKPOINT_PATH), str(BEST_FUSION_WEIGHTS_PATH))
+            trainer.save_all_weights(
+                str(CHECKPOINTS_DIR / "best_checkpoint.pth"),
+                str(FUSION_WEIGHTS_DIR / "best_fusion_weights.pth"),
+            )
+            print(f"--> 当前派生训练最优模型已更新，reward={best_reward:.2f}")
+
+        best_run_reward = max(best_run_reward, total_reward)
+
+    print(
+        f"--> 派生训练结束原因: {final_training_end_reason}；"
+        f"实际完成 Episode 数: {completed_episodes}/{max_episodes}；"
+        f"本次派生训练最佳 reward: {best_run_reward:.2f}"
+    )
+    trainer.save_all_weights(str(LATEST_CHECKPOINT_PATH), str(LATEST_FUSION_WEIGHTS_PATH))
+    trainer.save_all_weights(
+        str(CHECKPOINTS_DIR / "latest_checkpoint.pth"),
+        str(FUSION_WEIGHTS_DIR / "latest_fusion_weights.pth"),
+    )
+    print(f"--> 派生训练结束，latest 主干权重已保存到: {LATEST_CHECKPOINT_PATH}")
+    print(f"--> 派生训练结束，latest 参考融合权重已保存到: {LATEST_FUSION_WEIGHTS_PATH}")
+    print(f"--> run 目录 latest 主干权重: {CHECKPOINTS_DIR / 'latest_checkpoint.pth'}")
+    print(f"--> run 目录 latest 参考融合权重: {FUSION_WEIGHTS_DIR / 'latest_fusion_weights.pth'}")
+
+
+if __name__ == "__main__":
+    derived_train_main()

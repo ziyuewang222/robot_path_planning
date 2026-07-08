@@ -4,8 +4,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # 直接复用你现有的底层物理环境
-from config import TEST_MAP_SIZE, TEST_SEED, SENSOR_RANGE, MAP_GENERATOR, max_macro_steps_for
+from config import TEST_MAP_SIZE, TEST_SEED, SENSOR_RANGE, MAP_GENERATOR
 from grid_env import GridWorldEnv
+
+# BFS/对比评估允许的最大宏动作轮数系数：max_rounds = map_size * BFS_MAX_ROUNDS_PER_MAP_SIZE
+BFS_MAX_ROUNDS_PER_MAP_SIZE = 3
+
+
+def max_bfs_compare_rounds(map_size: int) -> int:
+    return map_size * BFS_MAX_ROUNDS_PER_MAP_SIZE
+
 
 class BFSFrontierPlanner:
     def __init__(self):
@@ -71,7 +79,7 @@ def run_bfs_evaluation():
     total_steps = 0
     total_area = 0.0
     
-    for step in range(1, max_macro_steps_for(map_size) * 2 + 1):
+    for step in range(1, max_bfs_compare_rounds(map_size) + 1):
         # 1. 调用 BFS 算子寻路最近的边界
         chosen_coord = planner.find_nearest_frontier(explored, pos)
         
