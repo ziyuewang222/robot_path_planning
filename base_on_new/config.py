@@ -36,7 +36,7 @@ LEGACY_CODE_DIR = LEGACY_ROOT / "prior_rubbish"
 TRAIN_MAP_SIZE = 200
 
 # 测试/部署地图尺寸（真实地图尺寸，改这一处即可）
-TEST_MAP_SIZE = 300
+TEST_MAP_SIZE = 200
 
 # 传感器视距（栅格），不随地图尺寸变化
 SENSOR_RANGE = 12
@@ -45,7 +45,7 @@ SENSOR_RANGE = 12
 SIGMA = 3.0
 
 TRAIN_MAX_MACRO_STEPS = 60
-TEST_SEED = 890
+TEST_SEED = 888
 
 # 地图生成器：运行前修改此项切换逻辑
 #   "room"   -> 房间 + 走廊 + 房间内零星障碍物

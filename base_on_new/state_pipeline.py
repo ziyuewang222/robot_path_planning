@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from config import TRAIN_MAP_SIZE, SIGMA
+from config import TRAIN_MAP_SIZE
 
 
 class StateTensorPipeline:
@@ -10,11 +10,10 @@ class StateTensorPipeline:
         """
         状态张量处理流水线：生成 3xHxW 的 PyTorch Tensor
         :param map_size: 地图边长
-        :param sigma: Channel 1 小车位置高斯热力图的方差
+        :param sigma: 兼容旧接口，当前 Channel 1 使用归一化曼哈顿距离热力图，不再使用 sigma
         :param device: 计算设备 ('cpu' 或 'cuda')
         """
         self.map_size = map_size
-        self.sigma = sigma if sigma is not None else SIGMA
         self.device = device
         
         # 提前生成坐标网格矩阵，避免每一次 step 都重复创建，大幅提高计算速度
@@ -41,10 +40,10 @@ class StateTensorPipeline:
         # --- Channel 0: 探索认知地图 ---
         c0 = torch.tensor(explored_map, dtype=torch.float32, device=self.device)
         
-        # --- Channel 1: 小车位置的高斯分布热力图 ---
-        # 根据欧氏距离计算二维高斯衰减
-        dist_sq = (self.grid_x - rx)**2 + (self.grid_y - ry)**2
-        c1 = torch.exp(-dist_sq / (2 * self.sigma**2))
+        # --- Channel 1: 基于曼哈顿距离的归一化小车热力图 ---
+        manhattan_dist = torch.abs(self.grid_x - rx) + torch.abs(self.grid_y - ry)
+        max_manhattan_dist = 2 * (self.map_size - 1)
+        c1 = 1.0 - torch.clamp(manhattan_dist / max_manhattan_dist, 0.0, 1.0)
         
         # --- Channel 2: 前线边界掩码 Mask (Frontier Detection) ---
         c2_mask = self._extract_frontier_mask(c0)
