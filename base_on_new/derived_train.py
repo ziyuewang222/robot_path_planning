@@ -26,7 +26,6 @@ from config import (
     AREA_REWARD_SCALE,
     STEP_PENALTY,
     COLLISION_PENALTY,
-    SUCCESS_BONUS_PER_AREA,
     DERIVED_INITIAL_CHECKPOINT_PATH,
     DERIVED_INITIAL_FUSION_WEIGHTS_PATH,
     DERIVED_EPSILON_START,
@@ -71,7 +70,6 @@ def derived_train_main():
     batch_size = 16
     replay_buffer_size = replay_buffer_size_for(map_size)
     learning_rate = DERIVED_LEARNING_RATE
-    success_bonus = min(100.0, SUCCESS_BONUS_PER_AREA * (map_size ** 2))
     epsilon_start = DERIVED_EPSILON_START
     epsilon_end = DERIVED_EPSILON_END
     epsilon_stabilize_end = EPSILON_STABILIZE_END
@@ -136,8 +134,9 @@ def derived_train_main():
         "area_reward_scale": AREA_REWARD_SCALE,
         "step_penalty": STEP_PENALTY,
         "collision_penalty": COLLISION_PENALTY,
-        "success_bonus": success_bonus,
-        "success_bonus_per_area": SUCCESS_BONUS_PER_AREA,
+        "success_bonus": 0.0,
+        "success_bonus_per_area": 0.0,
+        "reward_terminal_bonus_removed": True,
         "epsilon_start": epsilon_start,
         "epsilon_end": epsilon_end,
         "epsilon_stabilize_end": epsilon_stabilize_end,
@@ -205,8 +204,6 @@ def derived_train_main():
                 blocked_count += 1
 
             free_square = int((next_explored == 0).sum())
-            if done:
-                reward += success_bonus
 
             next_state = pipeline.process(next_explored, next_pos)
             next_mask = next_state[StateTensorPipeline.FRONTIER_CHANNEL]
@@ -224,7 +221,7 @@ def derived_train_main():
                 update_cnt += 1
 
             if done:
-                episode_end_reason = "已探索至少 95% 的可通行自由空间"
+                episode_end_reason = "已探索至少 98% 的可通行自由空间"
                 break
             if info.get("collision"):
                 episode_end_reason = "宏动作执行中发生碰撞"

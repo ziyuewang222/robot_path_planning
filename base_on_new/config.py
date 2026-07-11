@@ -51,10 +51,10 @@ REPLAY_BUFFER_BASE_MAP_SIZE = 100
 REPLAY_BUFFER_BASE_SIZE = 2000
 REPLAY_BUFFER_MIN_SIZE = 2000
 
-# DERIVED_INITIAL_CHECKPOINT_PATH = LATEST_CHECKPOINT_PATH
-# DERIVED_INITIAL_FUSION_WEIGHTS_PATH = LATEST_FUSION_WEIGHTS_PATH
-DERIVED_INITIAL_CHECKPOINT_PATH = RUNS_ROOT / "spatial_fcn_rl_20260711_013549" / "checkpoints" / "best_checkpoint.pth"
-DERIVED_INITIAL_FUSION_WEIGHTS_PATH = RUNS_ROOT / "spatial_fcn_rl_20260711_013549" / "fusion_weights" / "best_fusion_weights.pth"
+DERIVED_INITIAL_CHECKPOINT_PATH = LATEST_CHECKPOINT_PATH
+DERIVED_INITIAL_FUSION_WEIGHTS_PATH = LATEST_FUSION_WEIGHTS_PATH
+# DERIVED_INITIAL_CHECKPOINT_PATH = RUNS_ROOT / "spatial_fcn_rl_20260711_013549" / "checkpoints" / "best_checkpoint.pth"
+# DERIVED_INITIAL_FUSION_WEIGHTS_PATH = RUNS_ROOT / "spatial_fcn_rl_20260711_013549" / "fusion_weights" / "best_fusion_weights.pth"
 DERIVED_EPSILON_START = 0.5
 DERIVED_EPSILON_END = 0.1
 # 派生训练默认沿用全局 EPSILON_CONVERGE_RATIO，保持只改一处即可控制探索期占比。
@@ -68,10 +68,10 @@ DERIVED_LEARNING_RATE = 5e-5
 # 默认使用 artifacts 下全局 latest；如需评估 best 或某个 run 的权重，改这里即可。
 # ---------------------------------------------------------------------------
 
-TEST_CHECKPOINT_PATH = LATEST_CHECKPOINT_PATH
-TEST_FUSION_WEIGHTS_PATH = LATEST_FUSION_WEIGHTS_PATH
-# TEST_CHECKPOINT_PATH = "artifacts/runs/spatial_fcn_rl_20260711_133003/checkpoints/best_checkpoint.pth"
-# TEST_FUSION_WEIGHTS_PATH = "artifacts/runs/spatial_fcn_rl_20260711_133003/fusion_weights/best_fusion_weights.pth"
+# TEST_CHECKPOINT_PATH = LATEST_CHECKPOINT_PATH
+# TEST_FUSION_WEIGHTS_PATH = LATEST_FUSION_WEIGHTS_PATH
+TEST_CHECKPOINT_PATH = "artifacts/runs/spatial_fcn_rl_20260711_233652/checkpoints/best_checkpoint.pth"
+TEST_FUSION_WEIGHTS_PATH = "artifacts/runs/spatial_fcn_rl_20260711_233652/fusion_weights/best_fusion_weights.pth"
 
 LEGACY_ROOT = PROJECT_ROOT / "legacy"
 LEGACY_CODE_DIR = LEGACY_ROOT / "prior_rubbish"
@@ -80,7 +80,7 @@ LEGACY_CODE_DIR = LEGACY_ROOT / "prior_rubbish"
 TRAIN_MAP_SIZE = 200
 
 # 测试/部署地图尺寸（真实地图尺寸，改这一处即可）
-TEST_MAP_SIZE = 300
+TEST_MAP_SIZE = 200
 # 传感器视距（栅格），不随地图尺寸变化
 SENSOR_RANGE = 12
 
@@ -95,13 +95,12 @@ COLLISION_PENALTY = 50.0
 SUCCESS_BONUS_PER_AREA = 0.001
 
 TRAIN_MAX_MACRO_STEPS = 60
-TEST_SEED = 93246
-
+TEST_SEED = 807
 # 地图生成器：运行前修改此项切换逻辑
 #   "room"         -> 固定尺寸房间 + 走廊 + 房间内零星障碍物
 #   "dynamic_room" -> 房间尺寸随地图变大，较大房间内含桌子/隔断类障碍物
 #   "random"       -> 固定拓扑 + 全图随机散落障碍物
-MAP_GENERATOR = "room"
+MAP_GENERATOR = "dynamic_room"
 
 # ---------------------------------------------------------------------------
 # 房间-走廊地图生成
@@ -191,7 +190,7 @@ def replay_buffer_size_for(map_size: int) -> int:
     return max(REPLAY_BUFFER_MIN_SIZE, int(round(REPLAY_BUFFER_BASE_SIZE * scale)))
 
 
-def max_episodes_for(map_size: int, base_size: int = 100, base_episodes: int = 100) -> int:
+def max_episodes_for(map_size: int, base_size: int = 100, base_episodes: int = 200) -> int:
     """训练 Episode 数随地图边长线性放大，100 尺寸对应 120 次。"""
     scale = map_size / base_size
     return max(base_episodes, int(round(base_episodes * scale)))

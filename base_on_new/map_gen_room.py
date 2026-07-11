@@ -37,6 +37,7 @@ def build(map_size):
         for room in rooms:
             _place_room_obstacles(ground_truth, room)
 
+        _orthogonalize_free_space(ground_truth)
         _adjust_observable_area_to_target(ground_truth, rooms, target_observable_area)
         observable_area = _observable_area(ground_truth)
         free_area = int(np.sum(ground_truth == 0))
@@ -87,6 +88,51 @@ def _adjust_observable_area_to_target(ground_truth, rooms, target_observable_are
         else:
             changed += _remove_free_area(ground_truth, rooms, min(-diff, max(1, abs(diff) // 2)))
     return changed
+
+
+def _orthogonalize_free_space(ground_truth):
+    """用轴对齐形态学平滑自由区边界，尽量消掉斜边和锯齿。"""
+    free = ground_truth == 0
+    free = _binary_close_axis_aligned(free, iterations=2)
+    free = _binary_open_axis_aligned(free, iterations=1)
+    ground_truth[free] = 0
+
+
+def _binary_dilate_axis_aligned(mask):
+    expanded = mask.copy()
+    expanded[1:, :] |= mask[:-1, :]
+    expanded[:-1, :] |= mask[1:, :]
+    expanded[:, 1:] |= mask[:, :-1]
+    expanded[:, :-1] |= mask[:, 1:]
+    return expanded
+
+
+def _binary_erode_axis_aligned(mask):
+    padded = np.pad(mask, 1, mode="constant", constant_values=False)
+    center = padded[1:-1, 1:-1]
+    north = padded[:-2, 1:-1]
+    south = padded[2:, 1:-1]
+    west = padded[1:-1, :-2]
+    east = padded[1:-1, 2:]
+    return center & north & south & west & east
+
+
+def _binary_close_axis_aligned(mask, iterations=1):
+    result = mask
+    for _ in range(iterations):
+        result = _binary_dilate_axis_aligned(result)
+    for _ in range(iterations):
+        result = _binary_erode_axis_aligned(result)
+    return result
+
+
+def _binary_open_axis_aligned(mask, iterations=1):
+    result = mask
+    for _ in range(iterations):
+        result = _binary_erode_axis_aligned(result)
+    for _ in range(iterations):
+        result = _binary_dilate_axis_aligned(result)
+    return result
 
 
 def _add_free_area(ground_truth, rooms, amount):
