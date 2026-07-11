@@ -23,6 +23,8 @@ class GridWorldEnv:
         self.sensor_range = sensor_range
         self.seed = seed
         self.map_generator = map_generator or MAP_GENERATOR
+        self.current_room_idx = None
+        self.completed_rooms = set()
 
         self.action_space = {
             0: (-1, 0),
@@ -51,9 +53,11 @@ class GridWorldEnv:
         self.explored_map = np.full((self.map_size, self.map_size), -1, dtype=np.int8)
         self.ground_truth, self.map_meta, _ = build_map(self.map_size, self.map_generator)
         self.rooms = self.map_meta.get("rooms", [])
+        self.completed_rooms = set()
         self.robot_pos = list(sample_spawn(
             self.ground_truth, self.map_meta, self.map_size, self.map_generator
         ))
+        self.current_room_idx = self._locate_room(tuple(self.robot_pos))
         self._update_fov_bresenham()
 
         return self.explored_map.copy(), self.robot_pos.copy()
@@ -84,6 +88,8 @@ class GridWorldEnv:
         penalty_collision=COLLISION_PENALTY,
     ):
         area_before = np.sum(self.explored_map != -1)
+        room_before = self._locate_room(tuple(self.robot_pos))
+        room_completion_before = self._room_completion_ratio(room_before)
 
         n_steps = 0
         collision_occurred = False
@@ -122,7 +128,35 @@ class GridWorldEnv:
         area_after = np.sum(self.explored_map != -1)
         delta_area = float(area_after - area_before)
 
-        macro_reward = area_reward_scale * delta_area - penalty_step * n_steps
+        room_after = self._locate_room(tuple(self.robot_pos))
+        room_completion_after = self._room_completion_ratio(room_after)
+        room_completion_gain = max(0.0, room_completion_after - room_completion_before)
+
+        room_completion_bonus = 0.0
+        early_exit_penalty = 0.0
+        revisit_penalty = 0.0
+
+        if room_before is not None:
+            before_ratio = room_completion_before
+            after_ratio = room_completion_after if room_after == room_before else 0.0
+            if before_ratio < 0.98 and room_after != room_before:
+                early_exit_penalty = 8.0 + 24.0 * (1.0 - before_ratio)
+            if before_ratio < 0.98 and after_ratio >= 0.98:
+                room_completion_bonus = 18.0 + 22.0 * after_ratio
+                self.completed_rooms.add(room_before)
+            if room_after in self.completed_rooms and delta_area < 6.0:
+                revisit_penalty = 8.0
+
+        macro_reward = (
+            0.05 * delta_area
+            + 3.0 * (delta_area / (n_steps + 1.0))
+            + 2.0 * room_completion_gain * 100.0
+            + room_completion_bonus
+            - 0.8 * n_steps
+            - early_exit_penalty
+            - revisit_penalty
+        )
+        macro_reward += area_reward_scale * 0.0
         if collision_occurred or path_blocked:
             macro_reward -= penalty_collision
 
@@ -130,11 +164,21 @@ class GridWorldEnv:
         explored_free_space = np.sum(self.explored_map == 0)
         done = (explored_free_space >= total_free_space * 0.95)
 
+        self.current_room_idx = room_after
+
         info = {
             'delta_area': delta_area,
             'n_steps': n_steps,
             'collision': collision_occurred,
             'blocked': path_blocked,
+            'room_before': room_before,
+            'room_after': room_after,
+            'room_completion_before': room_completion_before,
+            'room_completion_after': room_completion_after,
+            'room_completion_gain': room_completion_gain,
+            'room_completion_bonus': room_completion_bonus,
+            'early_exit_penalty': early_exit_penalty,
+            'revisit_penalty': revisit_penalty,
         }
 
         return self.explored_map.copy(), self.robot_pos.copy(), macro_reward, n_steps, done, info
@@ -163,6 +207,29 @@ class GridWorldEnv:
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
         plt.pause(0.05)
+
+    def _locate_room(self, pos):
+        if not self.rooms:
+            return None
+        rx, ry = pos
+        for idx, room in enumerate(self.rooms):
+            x, y, w, h = room['bbox']
+            if x + 1 <= rx <= x + w and y + 1 <= ry <= y + h:
+                return idx
+        return None
+
+    def _room_completion_ratio(self, room_idx):
+        if room_idx is None or not self.rooms:
+            return 0.0
+        room = self.rooms[room_idx]
+        x, y, w, h = room['bbox']
+        patch = self.explored_map[x + 1:x + 1 + w, y + 1:y + 1 + h]
+        if patch.size == 0:
+            return 0.0
+        known_free = np.sum(patch == 0)
+        known_obstacle = np.sum(patch == 1)
+        known = known_free + known_obstacle
+        return float(known) / float(patch.size)
 
     def _update_fov_bresenham(self):
         rx, ry = self.robot_pos

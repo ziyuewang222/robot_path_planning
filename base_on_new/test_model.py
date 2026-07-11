@@ -3,7 +3,7 @@ import time
 import matplotlib.pyplot as plt
 import torch
 
-from config import MAP_GENERATOR, SENSOR_RANGE, SIGMA, TEST_MAP_SIZE, TRAIN_MAP_SIZE
+from config import MAP_GENERATOR, SENSOR_RANGE, TEST_MAP_SIZE, TRAIN_MAP_SIZE
 from grid_env import GridWorldEnv
 from models import SpatialActionDecision, SpatialFCN
 from state_pipeline import StateTensorPipeline
@@ -12,16 +12,17 @@ from state_pipeline import StateTensorPipeline
 def test_scale_invariance():
     """验证模型对尺寸变更的动态适应能力"""
     print("\n--- 正在验证 FCN 模型的尺寸不变性 ---")
-    model = SpatialFCN(in_channels=3)
+    model = SpatialFCN(in_channels=5)
 
-    dummy_train = torch.randn(1, 3, TRAIN_MAP_SIZE, TRAIN_MAP_SIZE)
+    dummy_train = torch.randn(1, 5, TRAIN_MAP_SIZE, TRAIN_MAP_SIZE)
     out_train = model(dummy_train)
     print(f"输入尺寸 {TRAIN_MAP_SIZE}x{TRAIN_MAP_SIZE} -> 输出尺寸: {out_train.shape} | 验证通过: {out_train.shape == (1, 1, TRAIN_MAP_SIZE, TRAIN_MAP_SIZE)}")
 
-    dummy_test = torch.randn(1, 3, TEST_MAP_SIZE, TEST_MAP_SIZE)
+    dummy_test = torch.randn(1, 5, TEST_MAP_SIZE, TEST_MAP_SIZE)
     out_test = model(dummy_test)
     print(f"输入尺寸 {TEST_MAP_SIZE}x{TEST_MAP_SIZE} -> 输出尺寸: {out_test.shape} | 验证通过: {out_test.shape == (1, 1, TEST_MAP_SIZE, TEST_MAP_SIZE)}")
     print(f"当前三尺度融合权重: {model.get_fusion_weights().tolist()}")
+    print("状态通道 ch3 当前为 BFS 可达距离场，不再是小车欧氏/曼哈顿热力图。")
 
 
 def visualize_decision(explored_map, q_raw, q_masked, chosen_coord, step):
@@ -63,7 +64,7 @@ if __name__ == "__main__":
         seed=1024,
         map_generator=MAP_GENERATOR,
     )
-    pipeline = StateTensorPipeline(map_size=TRAIN_MAP_SIZE, sigma=SIGMA)
+    pipeline = StateTensorPipeline(map_size=TRAIN_MAP_SIZE)
 
     model = SpatialFCN()
     decision_maker = SpatialActionDecision(model, epsilon=0.2)

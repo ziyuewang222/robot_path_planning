@@ -8,8 +8,8 @@ from config import (
     TRAIN_MAP_SIZE,
     max_episodes_for,
     max_macro_steps_for,
+    replay_buffer_size_for,
     SENSOR_RANGE,
-    SIGMA,
     MAP_GENERATOR,
     CHECKPOINTS_DIR,
     CHECKPOINTS_ROOT,
@@ -32,11 +32,22 @@ from config import (
     DERIVED_EPSILON_START,
     DERIVED_EPSILON_END,
     DERIVED_EPSILON_CONVERGE_RATIO,
+    DERIVED_LEARNING_RATE,
+    EPSILON_STABILIZE_RATIO,
+    EPSILON_STABILIZE_END,
 )
 from grid_env import GridWorldEnv
 from state_pipeline import StateTensorPipeline
 from models import SpatialActionDecision
 from trainer_core import SpatialQTrainer
+from train_monitor import (
+    PARAM_REPORT_INTERVAL,
+    build_probe_states,
+    print_update_monitor,
+    probe_actions,
+    snapshot_params,
+)
+from train_reference_eval import TRAIN_MAP_REPEAT_EPISODES, train_seed_for_episode
 
 
 def _path_or_none(path):
@@ -58,12 +69,22 @@ def derived_train_main():
     max_episodes = max_episodes_for(map_size)
     max_macro_steps_per_epi = max_macro_steps_for(map_size)
     batch_size = 16
-    success_bonus = SUCCESS_BONUS_PER_AREA * (map_size ** 2)
+    replay_buffer_size = replay_buffer_size_for(map_size)
+    learning_rate = DERIVED_LEARNING_RATE
+    success_bonus = min(100.0, SUCCESS_BONUS_PER_AREA * (map_size ** 2))
     epsilon_start = DERIVED_EPSILON_START
     epsilon_end = DERIVED_EPSILON_END
+    epsilon_stabilize_end = EPSILON_STABILIZE_END
     epsilon_converge_ratio = DERIVED_EPSILON_CONVERGE_RATIO
+    epsilon_stabilize_ratio = EPSILON_STABILIZE_RATIO
     epsilon_converge_episode = max(1, int(round(max_episodes * epsilon_converge_ratio)))
+    epsilon_stabilize_episode = max(
+        epsilon_converge_episode + 1,
+        min(max_episodes, int(round(max_episodes * epsilon_stabilize_ratio))),
+    )
     epsilon_decay = (epsilon_end / epsilon_start) ** (1.0 / epsilon_converge_episode)
+    stabilize_decay_steps = max(1, max_episodes - epsilon_stabilize_episode + 1)
+    epsilon_stabilize_decay = (epsilon_stabilize_end / epsilon_end) ** (1.0 / stabilize_decay_steps)
     experiment_name = f"derived_spatial_fcn_rl_m{map_size}_{MAP_GENERATOR}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -83,19 +104,24 @@ def derived_train_main():
     print(f"目标地图生成器: {MAP_GENERATOR}")
     print(f"初始主策略权重: {initial_checkpoint_path}")
     print(f"初始融合权重: {initial_fusion_weights_path}")
+    print(f"派生训练学习率: {learning_rate:.1e}")
     print(
-        f"训练地图尺寸: {map_size} | 最大 Episode 数: {max_episodes} | "
-        f"epsilon 将在前 {epsilon_converge_episode} 个 Episode 从 {epsilon_start:.2f} 下降到 {epsilon_end:.2f}"
+        f"训练地图尺寸: {map_size} | 最大 Episode 数: {max_episodes} | replay buffer: {replay_buffer_size} | "
+        f"epsilon 将在前 {epsilon_converge_episode} 个 Episode 从 {epsilon_start:.2f} 下降到 {epsilon_end:.2f}，"
+        f"第 {epsilon_stabilize_episode} 个 Episode 后继续下降到 {epsilon_stabilize_end:.2f}"
     )
+    print(f"训练地图复用: 每张训练图连续重复 {TRAIN_MAP_REPEAT_EPISODES} 个 Episode")
 
-    env = GridWorldEnv(map_size=map_size, sensor_range=SENSOR_RANGE, map_generator=MAP_GENERATOR)
-    pipeline = StateTensorPipeline(map_size=map_size, sigma=SIGMA, device=device)
-    trainer = SpatialQTrainer(lr=3e-4, gamma=0.98, device=device)
+    pipeline = StateTensorPipeline(map_size=map_size, device=device)
+    trainer = SpatialQTrainer(lr=learning_rate, gamma=0.98, buffer_size=replay_buffer_size, device=device)
     initial_policy_mode = trainer.load_initial_policy(
         checkpoint_path=initial_checkpoint_path,
         fusion_weight_path=initial_fusion_weights_path,
     )
     print(f"初始策略加载模式: {initial_policy_mode}")
+    probe_states = build_probe_states(map_size=map_size, device=device)
+    param_snapshot = snapshot_params(trainer.policy_net)
+    previous_probe_actions = probe_actions(trainer.policy_net, probe_states, device)
 
     run_meta = {
         "experiment_name": experiment_name,
@@ -105,6 +131,8 @@ def derived_train_main():
         "max_episodes": max_episodes,
         "max_macro_steps_per_epi": max_macro_steps_per_epi,
         "batch_size": batch_size,
+        "replay_buffer_size": replay_buffer_size,
+        "learning_rate": learning_rate,
         "area_reward_scale": AREA_REWARD_SCALE,
         "step_penalty": STEP_PENALTY,
         "collision_penalty": COLLISION_PENALTY,
@@ -112,12 +140,18 @@ def derived_train_main():
         "success_bonus_per_area": SUCCESS_BONUS_PER_AREA,
         "epsilon_start": epsilon_start,
         "epsilon_end": epsilon_end,
+        "epsilon_stabilize_end": epsilon_stabilize_end,
         "epsilon_converge_episode": epsilon_converge_episode,
         "epsilon_converge_ratio": epsilon_converge_ratio,
         "epsilon_decay": epsilon_decay,
+        "epsilon_stabilize_episode": epsilon_stabilize_episode,
+        "epsilon_stabilize_ratio": epsilon_stabilize_ratio,
+        "epsilon_stabilize_decay": epsilon_stabilize_decay,
         "device": str(device),
         "map_generator": MAP_GENERATOR,
         "model_type": "MultiScaleSpatialFCN",
+        "state_channel_3": "bfs_reachable_distance_field_vC",
+        "train_map_repeat_episodes": TRAIN_MAP_REPEAT_EPISODES,
         "initial_policy_mode": initial_policy_mode,
         "initial_checkpoint_path": str(initial_checkpoint_path) if initial_checkpoint_path else None,
         "initial_fusion_weights_path": str(initial_fusion_weights_path) if initial_fusion_weights_path else None,
@@ -138,6 +172,8 @@ def derived_train_main():
     final_training_end_reason = f"已完成预设最大 Episode 数量: {max_episodes}"
 
     for episode in range(1, max_episodes + 1):
+        train_seed = train_seed_for_episode(episode)
+        env = GridWorldEnv(map_size=map_size, sensor_range=SENSOR_RANGE, seed=train_seed, map_generator=MAP_GENERATOR)
         explored, pos = env.reset()
         state = pipeline.process(explored, pos)
 
@@ -173,12 +209,13 @@ def derived_train_main():
                 reward += success_bonus
 
             next_state = pipeline.process(next_explored, next_pos)
-            next_mask = next_state[2]
+            next_mask = next_state[StateTensorPipeline.FRONTIER_CHANNEL]
 
             trainer.memory.push(state.cpu(), action_coord, reward, next_state.cpu(), next_mask.cpu(), done, tau_steps)
 
             loss = trainer.update_step(batch_size=batch_size)
-            trainer.soft_update_target(tau=0.02)
+            if loss > 0:
+                trainer.soft_update_target(tau=0.02)
 
             state = next_state
             total_reward += reward
@@ -194,18 +231,26 @@ def derived_train_main():
             elif info.get("blocked"):
                 episode_end_reason = "目标路径不可达或目标被确认为障碍物"
 
-        epsilon = max(epsilon_end, epsilon * epsilon_decay)
+        if episode >= epsilon_stabilize_episode:
+            epsilon = max(epsilon_stabilize_end, epsilon * epsilon_stabilize_decay)
+        else:
+            epsilon = max(epsilon_end, epsilon * epsilon_decay)
         avg_loss = (total_loss / update_cnt) if update_cnt > 0 else 0.0
 
         print(
-            f"Episode [{episode:02d}/{max_episodes:02d}] | 累积物理回报: {total_reward:7.2f} | "
-            f"探索率(eps): {epsilon:.3f} | 平均 MSE 损失: {avg_loss:.4f} | steps: {steps:4d} | "
+            f"Episode [{episode:02d}/{max_episodes:02d}] | seed: {train_seed} | "
+            f"repeat_idx: {(episode - 1) % TRAIN_MAP_REPEAT_EPISODES + 1}/{TRAIN_MAP_REPEAT_EPISODES} | "
+            f"累积物理回报: {total_reward:7.2f} | "
+            f"探索率(eps): {epsilon:.3f} | 平均 SmoothL1 损失: {avg_loss:.4f} | steps: {steps:4d} | "
             f"free_square: {free_square:4d} | delta_area_sum: {delta_area_sum:7.1f} | "
             f"collision: {collision_count:2d} | blocked: {blocked_count:2d} | 结束原因: {episode_end_reason}"
         )
 
         log_line = {
             "episode": episode,
+            "train_seed": train_seed,
+            "train_seed_repeat_idx": (episode - 1) % TRAIN_MAP_REPEAT_EPISODES + 1,
+            "train_seed_repeat_episodes": TRAIN_MAP_REPEAT_EPISODES,
             "reward": total_reward,
             "avg_loss": avg_loss,
             "epsilon": epsilon,
@@ -221,6 +266,16 @@ def derived_train_main():
         }
         with open(LOGS_DIR / "train_progress.jsonl", "a", encoding="utf-8") as f:
             f.write(json.dumps(log_line, ensure_ascii=False) + "\n")
+
+        if episode % PARAM_REPORT_INTERVAL == 0:
+            param_snapshot, previous_probe_actions = print_update_monitor(
+                episode,
+                trainer.policy_net,
+                param_snapshot,
+                previous_probe_actions,
+                probe_states,
+                device,
+            )
 
         completed_episodes = episode
 

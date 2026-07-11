@@ -23,12 +23,20 @@ class RLRuntime:
     def __init__(self, weight_path: str, fusion_weight_path: str, map_size: int = TEST_MAP_SIZE):
         self.map_size = map_size
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.pipeline = StateTensorPipeline(map_size=map_size, sigma=3.0, device=self.device)
+        self.pipeline = StateTensorPipeline(map_size=map_size, device=self.device)
         self.policy_net = SpatialFCN().to(self.device)
         state_dict = torch.load(weight_path, map_location=self.device)
-        self.policy_net.load_state_dict(state_dict)
+        current_state = self.policy_net.state_dict()
+        compatible_state = {
+            key: value
+            for key, value in state_dict.items()
+            if key in current_state and current_state[key].shape == value.shape
+        }
+        current_state.update(compatible_state)
+        self.policy_net.load_state_dict(current_state)
         self.policy_net.load_fusion_weights(fusion_weight_path)
         self.policy_net.eval()
+        print(f"RL 三尺度融合权重: {self.policy_net.get_fusion_weights().detach().cpu().numpy().round(4).tolist()}")
         self.decision = SpatialActionDecision(self.policy_net, epsilon=0.0, device=self.device)
         self.max_rounds = max_macro_steps_for(map_size)
 

@@ -9,16 +9,16 @@ class MultiScaleSpatialFCN(nn.Module):
 
     设计目标：
     1. 保留原始分辨率分支，负责精确选点；
-    2. 引入 1/2 与 1/4 两个池化尺度，负责扩大感受野、观察走廊/房间等大结构；
-    3. 通过可学习的融合权重把三个尺度融合成单通道价值图。
+    2. 让 1/2 分辨率分支提供中尺度空间上下文，并继续参与逐像素 Q 图生成；
+    3. 让 1/4 分辨率分支提取更宏观的拓扑结构，上采样后直接参与逐像素 Q 图生成。
 
     说明：
-    - 这里的融合权重是 nn.Parameter，会在强化学习训练中被一起更新；
-    - 为了便于单独替换“参考权重”，本模型提供独立的融合权重保存/加载接口；
+    - full/half/quarter 三个尺度的融合权重是 nn.Parameter，会在强化学习训练中一起更新；
+    - 1/2 与 1/4 输入下采样时，边界/可行动作通道继续使用最大池化，稠密通道使用平均池化；
     - 最终输出仍然是 (B, 1, H, W)，便于执行单像素级动作选择。
     """
 
-    def __init__(self, in_channels: int = 3, base_channels: int = 32):
+    def __init__(self, in_channels: int = 5, base_channels: int = 32):
         super().__init__()
 
         c1 = base_channels
@@ -50,13 +50,11 @@ class MultiScaleSpatialFCN(nn.Module):
             nn.ReLU(inplace=True),
         )
 
-        # 尺度融合前的通道对齐，便于三个分支做加权融合
+        # 三个尺度统一投影到同一通道数后，在原始分辨率上融合生成逐像素 Q 图。
         self.fuse_proj_full = nn.Conv2d(c1, c2, kernel_size=1)
         self.fuse_proj_half = nn.Conv2d(c2, c2, kernel_size=1)
         self.fuse_proj_quarter = nn.Conv2d(c2, c2, kernel_size=1)
 
-        # 参考权重：这三个参数由强化学习一起训练出来，表示三个尺度的融合偏好。
-        # softmax 后分别对应原分辨率、1/2 分辨率、1/4 分辨率的融合系数。
         self.scale_fusion_logits = nn.Parameter(torch.zeros(3))
 
         self.head = nn.Sequential(
@@ -67,61 +65,90 @@ class MultiScaleSpatialFCN(nn.Module):
 
         self._last_fusion_weights = None
 
+        self.boundary_channels = (4,)
+        self.dense_channels = (0, 1, 2, 3)
+
+    def _mixed_pool2d(self, x: torch.Tensor, kernel_size: int, stride: int) -> torch.Tensor:
+        """ch4 边界掩码用最大池化，ch0 gain 与其他连续/稠密通道用平均池化，并恢复原通道顺序。"""
+        pooled = x.new_empty(
+            x.shape[0],
+            x.shape[1],
+            x.shape[2] // stride,
+            x.shape[3] // stride,
+        )
+        pooled[:, self.boundary_channels] = F.max_pool2d(
+            x[:, self.boundary_channels],
+            kernel_size=kernel_size,
+            stride=stride,
+        )
+        pooled[:, self.dense_channels] = F.avg_pool2d(
+            x[:, self.dense_channels],
+            kernel_size=kernel_size,
+            stride=stride,
+        )
+        return pooled
+
     def get_fusion_weights(self) -> torch.Tensor:
-        """返回当前三个尺度的 softmax 融合权重。"""
+        """返回 full/half/quarter 三个空间分支的 softmax 融合权重。"""
         return torch.softmax(self.scale_fusion_logits, dim=0)
 
+    def get_display_fusion_weights(self) -> torch.Tensor:
+        """返回用于训练监控/可视化展示的三尺度融合权重。"""
+        return self.get_fusion_weights()
+
     def set_fusion_logits(self, logits: torch.Tensor) -> None:
-        """外部接口：手动更换融合权重参数的初始化值。"""
+        """外部接口：手动更换 full/half/quarter 三尺度融合权重参数的初始化值。"""
+        if logits.shape == (2,):
+            logits = torch.cat([logits, logits.new_zeros(1)], dim=0)
         if logits.shape != (3,):
-            raise ValueError("fusion logits 必须是形状为 (3,) 的张量")
+            raise ValueError("fusion logits 必须是形状为 (3,) 的张量，或兼容旧权重的 (2,) 张量")
         with torch.no_grad():
             self.scale_fusion_logits.copy_(logits.to(self.scale_fusion_logits.device))
 
     def save_fusion_weights(self, path: str) -> None:
-        """只保存参考权重，便于和主干网络参数分开管理。"""
+        """保存 full/half/quarter 三尺度空间融合权重。"""
         torch.save({"scale_fusion_logits": self.scale_fusion_logits.detach().cpu()}, path)
 
     def load_fusion_weights(self, path: str, strict: bool = True) -> None:
-        """只加载参考权重，不影响卷积主干参数。"""
+        """加载 full/half/quarter 三尺度空间融合权重，兼容旧版二尺度融合权重。"""
         payload = torch.load(path, map_location=self.scale_fusion_logits.device)
         if isinstance(payload, dict) and "scale_fusion_logits" in payload:
-            with torch.no_grad():
-                self.scale_fusion_logits.copy_(payload["scale_fusion_logits"])
+            self.set_fusion_logits(payload["scale_fusion_logits"])
         elif not strict:
             return
         else:
             raise KeyError("权重文件中未找到 scale_fusion_logits")
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def extract_features(self, x: torch.Tensor):
         _, _, h, w = x.shape
 
-        # 原始分辨率路径
         full_feat = self.full_res_branch(x)
         full_feat = self.fuse_proj_full(full_feat)
 
-        # 1/2 分辨率路径
-        half_x = F.avg_pool2d(x, kernel_size=2, stride=2)
+        half_x = self._mixed_pool2d(x, kernel_size=2, stride=2)
         half_feat = self.half_res_branch(half_x)
         half_feat = self.fuse_proj_half(half_feat)
         half_feat = F.interpolate(half_feat, size=(h, w), mode="bilinear", align_corners=False)
 
-        # 1/4 分辨率路径
-        quarter_x = F.avg_pool2d(x, kernel_size=4, stride=4)
+        quarter_x = self._mixed_pool2d(x, kernel_size=4, stride=4)
         quarter_feat = self.quarter_res_branch(quarter_x)
         quarter_feat = self.fuse_proj_quarter(quarter_feat)
         quarter_feat = F.interpolate(quarter_feat, size=(h, w), mode="bilinear", align_corners=False)
 
-        # 三个尺度的参考权重由强化学习学习得到
         fusion_weights = self.get_fusion_weights()
-        self._last_fusion_weights = fusion_weights.detach().cpu()
-
-        fused = (
+        fused_feat = (
             fusion_weights[0] * full_feat
             + fusion_weights[1] * half_feat
             + fusion_weights[2] * quarter_feat
         )
-        return self.head(fused)
+
+        self._last_fusion_weights = self.get_display_fusion_weights().detach().cpu()
+
+        return full_feat, half_feat, quarter_feat, fused_feat
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        *_, fused_feat = self.extract_features(x)
+        return self.head(fused_feat)
 
 
 class SpatialFCN(MultiScaleSpatialFCN):
@@ -142,7 +169,7 @@ class SpatialActionDecision:
 
     def select_action(self, state_tensor, explore=True, return_maps=True):
         self.model.eval()
-        mask = state_tensor[2].to(self.device)
+        mask = state_tensor[4].to(self.device)
         valid_indices = torch.nonzero(mask > 0.5)
         if len(valid_indices) == 0:
             return None, None, None

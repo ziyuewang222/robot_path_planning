@@ -34,7 +34,7 @@ class SpatialQTrainer:
         self.target_net.eval()
 
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
-        self.criterion = nn.MSELoss()
+        self.criterion = nn.SmoothL1Loss(beta=1.0)
         self.memory = SMDPReplayBuffer(capacity=buffer_size)
 
     def update_step(self, batch_size=16):
@@ -85,7 +85,14 @@ class SpatialQTrainer:
         if not path.exists():
             raise FileNotFoundError(f"初始主策略权重不存在: {path}")
         state_dict = torch.load(path, map_location=self.device)
-        self.policy_net.load_state_dict(state_dict)
+        current_state = self.policy_net.state_dict()
+        compatible_state = {
+            key: value
+            for key, value in state_dict.items()
+            if key in current_state and current_state[key].shape == value.shape
+        }
+        current_state.update(compatible_state)
+        self.policy_net.load_state_dict(current_state)
         self.sync_target_net()
 
     def load_fusion_weights(self, fusion_weight_path) -> None:

@@ -34,8 +34,7 @@ from rl_runtime import RLRuntime
 NUM_COMPARE_SEEDS = 30
 
 # 随机种子起点。实际使用的种子为：SEED_START, SEED_START + 1, ...
-SEED_START = 50
-
+SEED_START = 800
 
 class CompareResult:
     def __init__(self, name, total_steps, total_area, done, rounds):

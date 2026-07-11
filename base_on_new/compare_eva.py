@@ -20,7 +20,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from bfs import BFSFrontierPlanner, max_bfs_compare_rounds
-from config import BEST_CHECKPOINT_PATH, BEST_FUSION_WEIGHTS_PATH, TEST_CHECKPOINT_PATH, TEST_FUSION_WEIGHTS_PATH, MAP_GENERATOR, SENSOR_RANGE, TEST_MAP_SIZE, TEST_SEED
+from config import (
+    BEST_CHECKPOINT_PATH,
+    BEST_FUSION_WEIGHTS_PATH,
+    MAP_GENERATOR,
+    SENSOR_RANGE,
+    TEST_CHECKPOINT_PATH,
+    TEST_FUSION_WEIGHTS_PATH,
+    TEST_MAP_SIZE,
+    TEST_SEED,
+)
 from grid_env import GridWorldEnv
 from rl_runtime import RLRuntime
 

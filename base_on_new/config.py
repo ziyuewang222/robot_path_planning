@@ -38,11 +38,29 @@ BEST_FUSION_WEIGHTS_PATH = FUSION_WEIGHTS_ROOT / f"{EXPERIMENT_PREFIX}_fusion_be
 # RUNS_ROOT / "某次run目录" / "fusion_weights" / "best_fusion_weights.pth"
 # ---------------------------------------------------------------------------
 
-DERIVED_INITIAL_CHECKPOINT_PATH = LATEST_CHECKPOINT_PATH
-DERIVED_INITIAL_FUSION_WEIGHTS_PATH = LATEST_FUSION_WEIGHTS_PATH
+# 探索期占总 Episode 的比例。epsilon 会在前 int(max_episodes * EPSILON_CONVERGE_RATIO) 个 Episode
+# 从 epsilon_start 衰减到 epsilon_end；修改这里即可统一控制 train.py 和 derived_train.py 的探索期长度。
+EPSILON_CONVERGE_RATIO = 0.3
+# 稳定训练期起点占总 Episode 的比例。到达该比例后，epsilon 会从 epsilon_end 继续下降到
+# EPSILON_STABILIZE_END，便于后期用更低探索率稳定 Q 网络参数。例如 0.8 表示最后 20% 训练进入稳定期。
+EPSILON_STABILIZE_RATIO = 0.8
+EPSILON_STABILIZE_END = 0.05
+# 回放池尺寸按地图面积缩放：buffer_size = max(REPLAY_BUFFER_MIN_SIZE,
+# int(REPLAY_BUFFER_BASE_SIZE * (map_size / REPLAY_BUFFER_BASE_MAP_SIZE) ** 2))。
+REPLAY_BUFFER_BASE_MAP_SIZE = 100
+REPLAY_BUFFER_BASE_SIZE = 2000
+REPLAY_BUFFER_MIN_SIZE = 2000
+
+# DERIVED_INITIAL_CHECKPOINT_PATH = LATEST_CHECKPOINT_PATH
+# DERIVED_INITIAL_FUSION_WEIGHTS_PATH = LATEST_FUSION_WEIGHTS_PATH
+DERIVED_INITIAL_CHECKPOINT_PATH = RUNS_ROOT / "spatial_fcn_rl_20260711_013549" / "checkpoints" / "best_checkpoint.pth"
+DERIVED_INITIAL_FUSION_WEIGHTS_PATH = RUNS_ROOT / "spatial_fcn_rl_20260711_013549" / "fusion_weights" / "best_fusion_weights.pth"
 DERIVED_EPSILON_START = 0.5
 DERIVED_EPSILON_END = 0.1
-DERIVED_EPSILON_CONVERGE_RATIO = 0.3
+# 派生训练默认沿用全局 EPSILON_CONVERGE_RATIO，保持只改一处即可控制探索期占比。
+DERIVED_EPSILON_CONVERGE_RATIO = EPSILON_CONVERGE_RATIO
+# 派生训练从已有策略继续微调，学习率应低于从零训练，避免探索期快速破坏原策略。
+DERIVED_LEARNING_RATE = 5e-5
 
 # ---------------------------------------------------------------------------
 # 测试/评估脚本权重接口
@@ -52,6 +70,8 @@ DERIVED_EPSILON_CONVERGE_RATIO = 0.3
 
 TEST_CHECKPOINT_PATH = LATEST_CHECKPOINT_PATH
 TEST_FUSION_WEIGHTS_PATH = LATEST_FUSION_WEIGHTS_PATH
+# TEST_CHECKPOINT_PATH = "artifacts/runs/spatial_fcn_rl_20260711_133003/checkpoints/best_checkpoint.pth"
+# TEST_FUSION_WEIGHTS_PATH = "artifacts/runs/spatial_fcn_rl_20260711_133003/fusion_weights/best_fusion_weights.pth"
 
 LEGACY_ROOT = PROJECT_ROOT / "legacy"
 LEGACY_CODE_DIR = LEGACY_ROOT / "prior_rubbish"
@@ -61,28 +81,27 @@ TRAIN_MAP_SIZE = 200
 
 # 测试/部署地图尺寸（真实地图尺寸，改这一处即可）
 TEST_MAP_SIZE = 300
-
 # 传感器视距（栅格），不随地图尺寸变化
 SENSOR_RANGE = 12
 
-# 状态张量中小车高斯热力图的 sigma，不随地图尺寸变化
+# 状态张量中小车热力图的 sigma，保留用于兼容旧接口；当前使用归一化曼哈顿距离热力图
 SIGMA = 3.0
 
 # 奖励函数：弱化面积收益，强化少走路，成功到达 95% 探索率给一次性奖励
 AREA_REWARD_SCALE = 0.1
 STEP_PENALTY = 0.5
 COLLISION_PENALTY = 50.0
-# 按地图面积缩放成功奖励；0.075 在 200x200 地图上对应 3000 的一次性奖励。
-SUCCESS_BONUS_PER_AREA = 0.075
+# 按地图面积缩放成功奖励，并在训练入口处设置上限，避免终点奖励主导 TD target。
+SUCCESS_BONUS_PER_AREA = 0.001
 
 TRAIN_MAX_MACRO_STEPS = 60
-TEST_SEED = 4
+TEST_SEED = 93246
 
 # 地图生成器：运行前修改此项切换逻辑
 #   "room"         -> 固定尺寸房间 + 走廊 + 房间内零星障碍物
 #   "dynamic_room" -> 房间尺寸随地图变大，较大房间内含桌子/隔断类障碍物
 #   "random"       -> 固定拓扑 + 全图随机散落障碍物
-MAP_GENERATOR = "dynamic_room"
+MAP_GENERATOR = "room"
 
 # ---------------------------------------------------------------------------
 # 房间-走廊地图生成
@@ -166,7 +185,13 @@ def num_obstacles_for(map_size: int, base_count: int = NUM_OBSTACLES_BASE) -> in
     return int(base_count * map_size / MAP_TEMPLATE_SIZE)
 
 
-def max_episodes_for(map_size: int, base_size: int = 100, base_episodes: int = 120) -> int:
+def replay_buffer_size_for(map_size: int) -> int:
+    """回放池容量随地图面积放大，避免大地图训练时过快遗忘早期经验。"""
+    scale = (map_size / REPLAY_BUFFER_BASE_MAP_SIZE) ** 2
+    return max(REPLAY_BUFFER_MIN_SIZE, int(round(REPLAY_BUFFER_BASE_SIZE * scale)))
+
+
+def max_episodes_for(map_size: int, base_size: int = 100, base_episodes: int = 100) -> int:
     """训练 Episode 数随地图边长线性放大，100 尺寸对应 120 次。"""
     scale = map_size / base_size
     return max(base_episodes, int(round(base_episodes * scale)))
