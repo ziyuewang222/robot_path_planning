@@ -17,7 +17,7 @@ class GridWorldEnv:
         全知室内地图仿真环境 (纯 2D Grid)
         :param map_size: 地图边长
         :param sensor_range: 传感器视距 (栅格)
-        :param map_generator: 地图生成器，"room" 或 "random"；默认读取 config.MAP_GENERATOR
+        :param map_generator: 地图生成器，默认读取 config.MAP_GENERATOR
         """
         self.map_size = map_size
         self.sensor_range = sensor_range
@@ -26,6 +26,9 @@ class GridWorldEnv:
         self.current_room_idx = None
         self.completed_rooms = set()
         self.abandoned_rooms = set()
+        self.recent_positions = []
+        self.recent_position_window = 12
+        self.position_repeat_penalty = 2.5
 
         self.action_space = {
             0: (-1, 0),
@@ -56,6 +59,7 @@ class GridWorldEnv:
         self.rooms = self.map_meta.get("rooms", [])
         self.completed_rooms = set()
         self.abandoned_rooms = set()
+        self.recent_positions = []
         self.robot_pos = list(sample_spawn(
             self.ground_truth, self.map_meta, self.map_size, self.map_generator
         ))
@@ -79,6 +83,7 @@ class GridWorldEnv:
             collision = True
 
         self._update_fov_bresenham()
+        self._update_recent_positions(tuple(self.robot_pos))
         return self.explored_map.copy(), self.robot_pos.copy(), collision
 
     def step_macro(
@@ -89,9 +94,10 @@ class GridWorldEnv:
         penalty_step=STEP_PENALTY,
         penalty_collision=COLLISION_PENALTY,
     ):
+        robot_pos_before = tuple(self.robot_pos)
         known_before = self.explored_map != -1
         area_before = np.sum(known_before)
-        room_before = self._locate_room(tuple(self.robot_pos))
+        room_before = self._locate_room(robot_pos_before)
         target_room = self._locate_room(tuple(target_coord))
         room_completion_before = self._room_completion_ratio(room_before)
         room_frontiers_before = self._room_frontier_count(room_before)
@@ -146,60 +152,75 @@ class GridWorldEnv:
         completion_progress_reward = 0.0
         early_exit_penalty = 0.0
         unfinished_frontier_penalty = 0.0
+        frontier_jump_penalty = 0.0
         revisit_penalty = 0.0
+        completed_room_revisit_penalty = 0.0
         abandoned_return_penalty = 0.0
+        recent_repeat_penalty = self._recent_repeat_penalty(tuple(self.robot_pos))
         area_reward = area_reward_scale * delta_area
+
+        near_frontier_score, near_frontier_dist = self._near_frontier_gain_score(robot_pos_before, radius=max(20, self.sensor_range * 2), top_k=5)
+        target_frontier_score, target_frontier_dist = self._near_frontier_gain_score(tuple(target_coord), radius=self.sensor_range, top_k=3)
 
         if room_before is not None:
             before_ratio = room_completion_before
             after_ratio = same_room_completion_after
-            current_room_unfinished = before_ratio < 0.98
+            current_room_unfinished = before_ratio < 0.995
             target_left_current_room = target_room != room_before
             path_left_current_room = room_after != room_before
 
-            if current_room_unfinished:
-                area_reward = 0.25 * delta_area_current_room + 0.02 * delta_area_outside_current_room
-                if target_left_current_room:
-                    early_exit_penalty += 20.0 + 60.0 * (1.0 - before_ratio)
-                    self.abandoned_rooms.add(room_before)
-                elif path_left_current_room:
-                    early_exit_penalty += 15.0 + 40.0 * (1.0 - before_ratio)
-                    self.abandoned_rooms.add(room_before)
-                if room_frontiers_before > 0 and target_left_current_room:
-                    unfinished_frontier_penalty = 10.0 + 1.5 * min(float(room_frontiers_before), 20.0)
+            if target_left_current_room or path_left_current_room:
+                if current_room_unfinished:
+                    early_exit_penalty += 28.0 + 90.0 * (1.0 - before_ratio)
+                else:
+                    early_exit_penalty += 8.0 + 24.0 * max(0.0, 1.0 - before_ratio)
+
+                if room_frontiers_before > 0:
+                    frontier_pressure = min(float(room_frontiers_before), 20.0)
+                    frontier_completion_gate = 0.5 + 0.5 * before_ratio
+                    unfinished_frontier_penalty = (10.0 + 2.5 * frontier_pressure) * frontier_completion_gate
+                    if before_ratio < 0.995:
+                        self.abandoned_rooms.add(room_before)
+
+            if near_frontier_dist is not None and target_frontier_dist is not None:
+                if target_frontier_dist > near_frontier_dist + max(6.0, self.sensor_range * 0.5):
+                    frontier_jump_penalty = 8.0 + 0.4 * (target_frontier_dist - near_frontier_dist)
 
             if room_after == room_before:
                 completion_progress_reward = 80.0 * max(0.0, after_ratio ** 2 - before_ratio ** 2)
 
-            if before_ratio < 0.98 and after_ratio >= 0.98:
-                room_completion_bonus = 40.0 + 40.0 * after_ratio
+            if before_ratio < 0.995 and after_ratio >= 0.995:
+                room_completion_bonus = 60.0 + 40.0 * max(0.0, after_ratio - 0.95)
                 self.completed_rooms.add(room_before)
                 self.abandoned_rooms.discard(room_before)
 
-        if room_after in self.completed_rooms and delta_area < 6.0:
-            revisit_penalty = 8.0
+        if room_after in self.completed_rooms:
+            completed_room_revisit_penalty = 8.0
 
         if room_after in self.abandoned_rooms and room_after != room_before:
             abandoned_return_penalty = 12.0
 
+        room_progress_bonus = completion_progress_reward + room_completion_bonus
         macro_reward = (
             area_reward
             + 3.0 * (delta_area / (n_steps + 1.0))
-            + 250.0 * room_completion_gain
-            + completion_progress_reward
-            + room_completion_bonus
+            + 150.0 * room_completion_gain
+            + 0.60 * room_progress_bonus
             - penalty_step * n_steps
             - early_exit_penalty
             - unfinished_frontier_penalty
             - revisit_penalty
+            - completed_room_revisit_penalty
             - abandoned_return_penalty
+            - frontier_jump_penalty
+            - recent_repeat_penalty
         )
         if collision_occurred or path_blocked:
             macro_reward -= penalty_collision
 
         total_free_space = np.sum(self.ground_truth == 0)
         explored_free_space = np.sum(self.explored_map == 0)
-        done = (explored_free_space >= total_free_space * 0.98)
+        done = (explored_free_space >= total_free_space * 0.995)
 
         self.current_room_idx = room_after
 
@@ -222,10 +243,28 @@ class GridWorldEnv:
             'early_exit_penalty': early_exit_penalty,
             'unfinished_frontier_penalty': unfinished_frontier_penalty,
             'revisit_penalty': revisit_penalty,
+            'completed_room_revisit_penalty': completed_room_revisit_penalty,
             'abandoned_return_penalty': abandoned_return_penalty,
+            'frontier_jump_penalty': frontier_jump_penalty,
+            'recent_repeat_penalty': recent_repeat_penalty,
+            'near_frontier_score': near_frontier_score,
+            'near_frontier_dist': near_frontier_dist,
+            'target_frontier_score': target_frontier_score,
+            'target_frontier_dist': target_frontier_dist,
         }
 
         return self.explored_map.copy(), self.robot_pos.copy(), macro_reward, n_steps, done, info
+
+    def _update_recent_positions(self, pos):
+        self.recent_positions.append(pos)
+        if len(self.recent_positions) > self.recent_position_window:
+            self.recent_positions = self.recent_positions[-self.recent_position_window:]
+
+    def _recent_repeat_penalty(self, pos):
+        if not self.recent_positions:
+            return 0.0
+        repeats = sum(1 for prev in self.recent_positions[:-1] if prev == pos)
+        return float(repeats * self.position_repeat_penalty)
 
     def render(self, step_num=0):
         display_grid = np.zeros((self.map_size, self.map_size), dtype=np.float32)
@@ -301,6 +340,86 @@ class GridWorldEnv:
                         if self.explored_map[nx, ny] == -1:
                             count += 1
                             break
+        return count
+
+    def _is_frontier_cell(self, pos):
+        x, y = pos
+        if not (0 <= x < self.map_size and 0 <= y < self.map_size):
+            return False
+        if self.explored_map[x, y] != 0:
+            return False
+        for dx, dy in self.action_space.values():
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < self.map_size and 0 <= ny < self.map_size:
+                if self.explored_map[nx, ny] == -1:
+                    return True
+        return False
+
+    def _line_of_sight_blocked(self, start, end):
+        for lx, ly in self._bresenham_line(start[0], start[1], end[0], end[1])[1:-1]:
+            if self.explored_map[lx, ly] == 1:
+                return True
+        return False
+
+    def _frontier_lightweight_gain(self, pos, radius=None):
+        if not self._is_frontier_cell(pos):
+            return 0.0
+        radius = self.sensor_range if radius is None else radius
+        px, py = pos
+        x_min = max(0, px - radius)
+        x_max = min(self.map_size - 1, px + radius)
+        y_min = max(0, py - radius)
+        y_max = min(self.map_size - 1, py + radius)
+        gain = 0
+        for x in range(x_min, x_max + 1):
+            for y in range(y_min, y_max + 1):
+                if self.explored_map[x, y] != -1:
+                    continue
+                dx = x - px
+                dy = y - py
+                if dx * dx + dy * dy > radius * radius:
+                    continue
+                if self._line_of_sight_blocked(pos, (x, y)):
+                    continue
+                gain += 1
+        return float(gain)
+
+    def _near_frontier_gain_score(self, start, radius=25, top_k=5):
+        sx, sy = start
+        candidates = []
+        for x in range(max(0, sx - radius), min(self.map_size, sx + radius + 1)):
+            for y in range(max(0, sy - radius), min(self.map_size, sy + radius + 1)):
+                dist = abs(x - sx) + abs(y - sy)
+                if dist > radius:
+                    continue
+                if not self._is_frontier_cell((x, y)):
+                    continue
+                gain = self._frontier_lightweight_gain((x, y))
+                if gain <= 0.0:
+                    continue
+                candidates.append((gain, dist))
+        if not candidates:
+            return 0.0, None
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        selected = candidates[:top_k]
+        score = min(80.0, float(sum(gain for gain, _ in selected)))
+        best_dist = min(dist for _, dist in selected)
+        return score, float(best_dist)
+
+    def _nearby_mask_sum(self, mask, center, radius):
+        cx, cy = center
+        count = 0
+        x_min = max(0, cx - radius)
+        x_max = min(self.map_size - 1, cx + radius)
+        y_min = max(0, cy - radius)
+        y_max = min(self.map_size - 1, cy + radius)
+        radius_sq = radius * radius
+        for x in range(x_min, x_max + 1):
+            for y in range(y_min, y_max + 1):
+                dx = x - cx
+                dy = y - cy
+                if dx * dx + dy * dy <= radius_sq and mask[x, y]:
+                    count += 1
         return count
 
     def _update_fov_bresenham(self):

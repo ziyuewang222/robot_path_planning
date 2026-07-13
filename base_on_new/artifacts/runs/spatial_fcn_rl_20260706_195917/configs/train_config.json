@@ -1,0 +1,14 @@
+{
+  "experiment_name": "spatial_fcn_rl_m300_room_20260706_195917",
+  "timestamp": "2026-07-06T19:59:17",
+  "map_size": 300,
+  "max_episodes": 120,
+  "max_macro_steps_per_epi": 120,
+  "batch_size": 16,
+  "epsilon_start": 1.0,
+  "epsilon_end": 0.08,
+  "epsilon_decay": 0.99,
+  "device": "cuda",
+  "map_generator": "room",
+  "model_type": "MultiScaleSpatialFCN"
+}

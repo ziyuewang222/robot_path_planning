@@ -22,10 +22,12 @@ from config import (
     BEST_CHECKPOINT_PATH,
     BEST_FUSION_WEIGHTS_PATH,
     TEST_CHECKPOINT_PATH,
+    TEST_FUSION_WEIGHTS,
     TEST_FUSION_WEIGHTS_PATH,
     MAP_GENERATOR,
     SENSOR_RANGE,
     TEST_MAP_SIZE,
+    resolve_test_fusion_weights_path,
 )
 from grid_env import GridWorldEnv
 from rl_runtime import RLRuntime
@@ -197,7 +199,7 @@ def _print_summary(results):
 def main():
     parser = argparse.ArgumentParser(description="Batch compare BFS baseline with RL policy")
     parser.add_argument("--weights", type=str, default=str(TEST_CHECKPOINT_PATH))
-    parser.add_argument("--fusion-weights", type=str, default=str(TEST_FUSION_WEIGHTS_PATH))
+    parser.add_argument("--fusion-weights", type=str, default=None)
     parser.add_argument("--use-best", action="store_true")
     args = parser.parse_args()
 
@@ -207,6 +209,10 @@ def main():
     else:
         weight_path = args.weights
         fusion_weight_path = args.fusion_weights
+
+    fusion_weight_path = resolve_test_fusion_weights_path(fusion_weight_path)
+    if fusion_weight_path is None and TEST_FUSION_WEIGHTS is not None:
+        print(f"使用内置三元组融合权重: {tuple(TEST_FUSION_WEIGHTS)}")
 
     rl_runtime = RLRuntime(weight_path, fusion_weight_path, map_size=TEST_MAP_SIZE)
     seeds = [SEED_START + idx for idx in range(NUM_COMPARE_SEEDS)]

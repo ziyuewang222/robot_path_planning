@@ -51,10 +51,10 @@ REPLAY_BUFFER_BASE_MAP_SIZE = 100
 REPLAY_BUFFER_BASE_SIZE = 2000
 REPLAY_BUFFER_MIN_SIZE = 2000
 
-DERIVED_INITIAL_CHECKPOINT_PATH = LATEST_CHECKPOINT_PATH
-DERIVED_INITIAL_FUSION_WEIGHTS_PATH = LATEST_FUSION_WEIGHTS_PATH
-# DERIVED_INITIAL_CHECKPOINT_PATH = RUNS_ROOT / "spatial_fcn_rl_20260711_013549" / "checkpoints" / "best_checkpoint.pth"
-# DERIVED_INITIAL_FUSION_WEIGHTS_PATH = RUNS_ROOT / "spatial_fcn_rl_20260711_013549" / "fusion_weights" / "best_fusion_weights.pth"
+# DERIVED_INITIAL_CHECKPOINT_PATH = LATEST_CHECKPOINT_PATH
+# DERIVED_INITIAL_FUSION_WEIGHTS_PATH = LATEST_FUSION_WEIGHTS_PATH
+DERIVED_INITIAL_CHECKPOINT_PATH = RUNS_ROOT / "spatial_fcn_rl_20260712_075202" / "checkpoints" / "best_checkpoint.pth"
+DERIVED_INITIAL_FUSION_WEIGHTS_PATH = RUNS_ROOT / "spatial_fcn_rl_20260712_075202" / "fusion_weights" / "best_fusion_weights.pth"
 DERIVED_EPSILON_START = 0.5
 DERIVED_EPSILON_END = 0.1
 # 派生训练默认沿用全局 EPSILON_CONVERGE_RATIO，保持只改一处即可控制探索期占比。
@@ -68,10 +68,30 @@ DERIVED_LEARNING_RATE = 5e-5
 # 默认使用 artifacts 下全局 latest；如需评估 best 或某个 run 的权重，改这里即可。
 # ---------------------------------------------------------------------------
 
+# 主策略权重保持默认 latest；融合权重默认直接写成三元向量常量。
+# 例如 [1, 0, 0] 表示完全信任高分辨率分支。
 # TEST_CHECKPOINT_PATH = LATEST_CHECKPOINT_PATH
-# TEST_FUSION_WEIGHTS_PATH = LATEST_FUSION_WEIGHTS_PATH
-TEST_CHECKPOINT_PATH = "artifacts/runs/spatial_fcn_rl_20260711_233652/checkpoints/best_checkpoint.pth"
-TEST_FUSION_WEIGHTS_PATH = "artifacts/runs/spatial_fcn_rl_20260711_233652/fusion_weights/best_fusion_weights.pth"
+TEST_CHECKPOINT_PATH = "artifacts/runs/spatial_fcn_rl_20260713_151346/checkpoints/best_checkpoint.pth"
+TEST_FUSION_WEIGHTS = (0.6,0.2,0.2)
+# TEST_FUSION_WEIGHTS_PATH = "artifacts/runs/spatial_fcn_rl_20260713_151346/fusion_weights/best_fusion_weights.pth"
+TEST_FUSION_WEIGHTS_PATH = None
+# 兼容旧代码：部分脚本还会导入这个名字。
+TEST_FUSION_WEIGHTS_FILE_PATH = TEST_FUSION_WEIGHTS_PATH
+
+
+def resolve_test_fusion_weights_path(explicit_path=None):
+    """统一解析测试融合权重：优先显式文件路径，其次使用三元组常量。"""
+    if explicit_path is not None:
+        return explicit_path
+    if TEST_FUSION_WEIGHTS_PATH is not None:
+        return TEST_FUSION_WEIGHTS_PATH
+    return None
+
+# 如需继续使用文件权重，可把上面几行改成：
+# TEST_FUSION_WEIGHTS = None
+# TEST_FUSION_WEIGHTS_PATH = FUSION_WEIGHTS_ROOT / "spatial_fcn_rl_weights_100.pth"
+# TEST_FUSION_WEIGHTS_FILE_PATH = TEST_FUSION_WEIGHTS_PATH
+# TEST_CHECKPOINT_PATH = "artifacts/runs/spatial_fcn_rl_20260712_075202/checkpoints/best_checkpoint.pth"
 
 LEGACY_ROOT = PROJECT_ROOT / "legacy"
 LEGACY_CODE_DIR = LEGACY_ROOT / "prior_rubbish"
@@ -87,20 +107,23 @@ SENSOR_RANGE = 12
 # 状态张量中小车热力图的 sigma，保留用于兼容旧接口；当前使用归一化曼哈顿距离热力图
 SIGMA = 3.0
 
-# 奖励函数：弱化面积收益，强化少走路，成功到达 95% 探索率给一次性奖励
+# 奖励函数：弱化面积收益，强化少走路，并重点惩罚房间未完成就提前离开；
+# 成功到达 99.5% 探索率给一次性奖励
 AREA_REWARD_SCALE = 0.1
-STEP_PENALTY = 0.5
+STEP_PENALTY = 1.2
 COLLISION_PENALTY = 50.0
 # 按地图面积缩放成功奖励，并在训练入口处设置上限，避免终点奖励主导 TD target。
-SUCCESS_BONUS_PER_AREA = 0.001
+SUCCESS_BONUS_PER_AREA = 0.0008
 
 TRAIN_MAX_MACRO_STEPS = 60
-TEST_SEED = 807
+TEST_SEED = 800
 # 地图生成器：运行前修改此项切换逻辑
-#   "room"         -> 固定尺寸房间 + 走廊 + 房间内零星障碍物
-#   "dynamic_room" -> 房间尺寸随地图变大，较大房间内含桌子/隔断类障碍物
-#   "random"       -> 固定拓扑 + 全图随机散落障碍物
-MAP_GENERATOR = "dynamic_room"
+#   "room"            -> 固定尺寸房间 + 走廊 + 房间内零星障碍物
+#   "dynamic_room"    -> 房间尺寸随地图变大，较大房间内含桌子/隔断类障碍物
+#   "easy_big_room"   -> 3 个大房间，拓扑更简单，少量桌椅式障碍物
+#   "random"          -> 固定拓扑 + 全图随机散落障碍物
+MAP_GENERATOR = "easy_big_room"
+
 
 # ---------------------------------------------------------------------------
 # 房间-走廊地图生成
@@ -190,7 +213,7 @@ def replay_buffer_size_for(map_size: int) -> int:
     return max(REPLAY_BUFFER_MIN_SIZE, int(round(REPLAY_BUFFER_BASE_SIZE * scale)))
 
 
-def max_episodes_for(map_size: int, base_size: int = 100, base_episodes: int = 200) -> int:
+def max_episodes_for(map_size: int, base_size: int = 100, base_episodes: int = 300) -> int:
     """训练 Episode 数随地图边长线性放大，100 尺寸对应 120 次。"""
     scale = map_size / base_size
     return max(base_episodes, int(round(base_episodes * scale)))

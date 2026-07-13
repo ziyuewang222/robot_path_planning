@@ -1,13 +1,13 @@
 """
 使用方法
 
-1. 默认使用 `config.py` 中的 TEST_CHECKPOINT_PATH 和 TEST_FUSION_WEIGHTS_PATH 进行评估：
+1. 默认使用 `config.py` 中的 TEST_CHECKPOINT_PATH 进行评估，融合权重直接使用 `TEST_FUSION_WEIGHTS`：
    python eval_policy.py
 
-2. 指定主干权重和融合权重：
+2. 指定主干权重和融合权重文件：
    python eval_policy.py --weights /path/to/checkpoint.pth --fusion-weights /path/to/fusion.pth
 
-3. 只指定主干权重，融合权重仍默认使用 TEST_FUSION_WEIGHTS_PATH：
+3. 只指定主干权重，融合权重仍默认使用 `TEST_FUSION_WEIGHTS`：
    python eval_policy.py --weights /path/to/checkpoint.pth
 
 4. 指定使用 best：
@@ -20,10 +20,12 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+
 from config import (
     BEST_CHECKPOINT_PATH,
     BEST_FUSION_WEIGHTS_PATH,
     TEST_CHECKPOINT_PATH,
+    TEST_FUSION_WEIGHTS,
     TEST_FUSION_WEIGHTS_PATH,
     MAP_GENERATOR,
     SENSOR_RANGE,
@@ -376,6 +378,14 @@ def _resolve_paths(args):
     return args.weights, args.fusion_weights
 
 
+def _resolve_fusion_weights_cli(fusion_weight_path):
+    if fusion_weight_path is not None:
+        return fusion_weight_path
+    if TEST_FUSION_WEIGHTS is not None:
+        return None
+    return TEST_FUSION_WEIGHTS_PATH
+
+
 def evaluate_model(weight_path, fusion_weight_path):
     env = GridWorldEnv(map_size=TEST_MAP_SIZE, sensor_range=SENSOR_RANGE, seed=TEST_SEED, map_generator=MAP_GENERATOR)
     runtime = InspectableRuntime(weight_path, fusion_weight_path, map_size=TEST_MAP_SIZE)
@@ -398,8 +408,10 @@ def evaluate_model(weight_path, fusion_weight_path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Inspect RL policy internals with visualization")
     parser.add_argument("--weights", type=str, default=str(TEST_CHECKPOINT_PATH))
-    parser.add_argument("--fusion-weights", type=str, default=str(TEST_FUSION_WEIGHTS_PATH))
+    parser.add_argument("--fusion-weights", type=str, default=None)
     parser.add_argument("--use-best", action="store_true")
     args = parser.parse_args()
     weight_path, fusion_weight_path = _resolve_paths(args)
+    fusion_weight_path = _resolve_fusion_weights_cli(fusion_weight_path)
+    evaluate_model(weight_path, fusion_weight_path)
     evaluate_model(weight_path, fusion_weight_path)

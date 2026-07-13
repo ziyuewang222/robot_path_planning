@@ -105,6 +105,18 @@ class MultiScaleSpatialFCN(nn.Module):
         with torch.no_grad():
             self.scale_fusion_logits.copy_(logits.to(self.scale_fusion_logits.device))
 
+    def set_fusion_weights(self, weights: torch.Tensor) -> None:
+        """按概率权重直接设置 full/half/quarter 三尺度融合系数。"""
+        weights = torch.as_tensor(weights, dtype=self.scale_fusion_logits.dtype, device=self.scale_fusion_logits.device)
+        if weights.shape == (2,):
+            weights = torch.cat([weights, weights.new_zeros(1)], dim=0)
+        if weights.shape != (3,):
+            raise ValueError("fusion weights 必须是形状为 (3,) 的张量，或兼容旧权重的 (2,) 张量")
+        weights = torch.clamp(weights, min=1e-8)
+        weights = weights / weights.sum()
+        logits = torch.log(weights)
+        self.set_fusion_logits(logits)
+
     def save_fusion_weights(self, path: str) -> None:
         """保存 full/half/quarter 三尺度空间融合权重。"""
         torch.save({"scale_fusion_logits": self.scale_fusion_logits.detach().cpu()}, path)

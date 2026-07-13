@@ -26,9 +26,11 @@ from config import (
     MAP_GENERATOR,
     SENSOR_RANGE,
     TEST_CHECKPOINT_PATH,
+    TEST_FUSION_WEIGHTS,
     TEST_FUSION_WEIGHTS_PATH,
     TEST_MAP_SIZE,
     TEST_SEED,
+    resolve_test_fusion_weights_path,
 )
 from grid_env import GridWorldEnv
 from rl_runtime import RLRuntime
@@ -165,7 +167,7 @@ def _print_results(bfs_result, rl_result):
 def main():
     parser = argparse.ArgumentParser(description="Compare BFS baseline with RL policy on the same test map")
     parser.add_argument("--weights", type=str, default=str(TEST_CHECKPOINT_PATH))
-    parser.add_argument("--fusion-weights", type=str, default=str(TEST_FUSION_WEIGHTS_PATH))
+    parser.add_argument("--fusion-weights", type=str, default=None)
     parser.add_argument("--use-best", action="store_true")
     parser.add_argument("--vis", action="store_true")
     args = parser.parse_args()
@@ -176,6 +178,10 @@ def main():
     else:
         weight_path = args.weights
         fusion_weight_path = args.fusion_weights
+
+    fusion_weight_path = resolve_test_fusion_weights_path(fusion_weight_path)
+    if fusion_weight_path is None and TEST_FUSION_WEIGHTS is not None:
+        print(f"使用内置三元组融合权重: {tuple(TEST_FUSION_WEIGHTS)}")
 
     bfs_result, rl_result = _run_comparison(weight_path, fusion_weight_path, args.vis)
     _print_results(bfs_result, rl_result)

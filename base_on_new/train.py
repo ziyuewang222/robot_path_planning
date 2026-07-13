@@ -195,7 +195,7 @@ def train_main():
                 update_cnt += 1
 
             if done:
-                episode_end_reason = "已探索至少 98% 的可通行自由空间"
+                episode_end_reason = "已探索至少 99.5% 的可通行自由空间"
                 break
             if info.get("collision"):
                 episode_end_reason = "宏动作执行中发生碰撞"

@@ -31,6 +31,8 @@ from config import (
 import map_gen_random
 import map_gen_room
 
+import map_gen_easy_big_room
+
 GENERATORS = {
     "room": {
         "build": map_gen_room.build,
@@ -39,6 +41,10 @@ GENERATORS = {
     "dynamic_room": {
         "build": lambda map_size: _build_dynamic_room(map_size),
         "sample_spawn": lambda ground_truth, meta: _sample_dynamic_room_spawn(ground_truth, meta),
+    },
+    "easy_big_room": {
+        "build": map_gen_easy_big_room.build,
+        "sample_spawn": map_gen_easy_big_room.sample_spawn,
     },
     "random": {
         "build": map_gen_random.build,

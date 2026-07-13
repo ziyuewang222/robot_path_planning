@@ -1,0 +1,248 @@
+{
+  "experiment_name": "derived_spatial_fcn_rl_m200_dynamic_room_20260711_044841",
+  "train_mode": "derived",
+  "timestamp": "2026-07-11T04:50:26",
+  "map_size": 200,
+  "max_episodes": 1000,
+  "max_macro_steps_per_epi": 120,
+  "batch_size": 16,
+  "replay_buffer_size": 8000,
+  "learning_rate": 5e-05,
+  "area_reward_scale": 0.1,
+  "step_penalty": 0.5,
+  "collision_penalty": 50.0,
+  "success_bonus": 40.0,
+  "success_bonus_per_area": 0.001,
+  "epsilon_start": 0.5,
+  "epsilon_end": 0.1,
+  "epsilon_stabilize_end": 0.05,
+  "epsilon_converge_episode": 300,
+  "epsilon_converge_ratio": 0.3,
+  "epsilon_decay": 0.9946495717611972,
+  "epsilon_stabilize_episode": 800,
+  "epsilon_stabilize_ratio": 0.8,
+  "epsilon_stabilize_decay": 0.9965574457887793,
+  "device": "cuda",
+  "map_generator": "dynamic_room",
+  "model_type": "MultiScaleSpatialFCN",
+  "state_channel_3": "bfs_reachable_distance_field_vC",
+  "train_map_repeat_episodes": 3,
+  "reference_eval_interval": 20,
+  "reference_seeds": [
+    50,
+    51,
+    52,
+    53,
+    54,
+    55,
+    56,
+    57,
+    58,
+    59,
+    60,
+    61,
+    62,
+    63,
+    64,
+    65,
+    66,
+    67,
+    68,
+    69,
+    70,
+    71,
+    72,
+    73,
+    74,
+    75,
+    76,
+    77,
+    78,
+    79
+  ],
+  "bfs_reference_baselines": {
+    "50": {
+      "seed": 50,
+      "steps": 879,
+      "area": 7236.0,
+      "done": true
+    },
+    "51": {
+      "seed": 51,
+      "steps": 936,
+      "area": 7359.0,
+      "done": true
+    },
+    "52": {
+      "seed": 52,
+      "steps": 841,
+      "area": 7367.0,
+      "done": true
+    },
+    "53": {
+      "seed": 53,
+      "steps": 849,
+      "area": 7229.0,
+      "done": true
+    },
+    "54": {
+      "seed": 54,
+      "steps": 991,
+      "area": 7227.0,
+      "done": true
+    },
+    "55": {
+      "seed": 55,
+      "steps": 904,
+      "area": 7383.0,
+      "done": true
+    },
+    "56": {
+      "seed": 56,
+      "steps": 964,
+      "area": 7280.0,
+      "done": true
+    },
+    "57": {
+      "seed": 57,
+      "steps": 1125,
+      "area": 7140.0,
+      "done": true
+    },
+    "58": {
+      "seed": 58,
+      "steps": 889,
+      "area": 7362.0,
+      "done": true
+    },
+    "59": {
+      "seed": 59,
+      "steps": 763,
+      "area": 7317.0,
+      "done": true
+    },
+    "60": {
+      "seed": 60,
+      "steps": 949,
+      "area": 7238.0,
+      "done": true
+    },
+    "61": {
+      "seed": 61,
+      "steps": 1020,
+      "area": 7356.0,
+      "done": true
+    },
+    "62": {
+      "seed": 62,
+      "steps": 1025,
+      "area": 7300.0,
+      "done": true
+    },
+    "63": {
+      "seed": 63,
+      "steps": 848,
+      "area": 7247.0,
+      "done": true
+    },
+    "64": {
+      "seed": 64,
+      "steps": 856,
+      "area": 7275.0,
+      "done": true
+    },
+    "65": {
+      "seed": 65,
+      "steps": 958,
+      "area": 7328.0,
+      "done": true
+    },
+    "66": {
+      "seed": 66,
+      "steps": 846,
+      "area": 7374.0,
+      "done": true
+    },
+    "67": {
+      "seed": 67,
+      "steps": 798,
+      "area": 7266.0,
+      "done": true
+    },
+    "68": {
+      "seed": 68,
+      "steps": 867,
+      "area": 7121.0,
+      "done": true
+    },
+    "69": {
+      "seed": 69,
+      "steps": 824,
+      "area": 7288.0,
+      "done": true
+    },
+    "70": {
+      "seed": 70,
+      "steps": 960,
+      "area": 7367.0,
+      "done": true
+    },
+    "71": {
+      "seed": 71,
+      "steps": 842,
+      "area": 7413.0,
+      "done": true
+    },
+    "72": {
+      "seed": 72,
+      "steps": 858,
+      "area": 7133.0,
+      "done": true
+    },
+    "73": {
+      "seed": 73,
+      "steps": 946,
+      "area": 7251.0,
+      "done": true
+    },
+    "74": {
+      "seed": 74,
+      "steps": 889,
+      "area": 7223.0,
+      "done": true
+    },
+    "75": {
+      "seed": 75,
+      "steps": 953,
+      "area": 7304.0,
+      "done": true
+    },
+    "76": {
+      "seed": 76,
+      "steps": 1023,
+      "area": 7354.0,
+      "done": true
+    },
+    "77": {
+      "seed": 77,
+      "steps": 966,
+      "area": 7361.0,
+      "done": true
+    },
+    "78": {
+      "seed": 78,
+      "steps": 917,
+      "area": 7245.0,
+      "done": true
+    },
+    "79": {
+      "seed": 79,
+      "steps": 885,
+      "area": 7258.0,
+      "done": true
+    }
+  },
+  "initial_policy_mode": "checkpoint+fusion_weights",
+  "initial_checkpoint_path": "/home/wzy/robot_path_planning/base_on_new/artifacts/checkpoints/spatial_fcn_rl_latest.pth",
+  "initial_fusion_weights_path": "/home/wzy/robot_path_planning/base_on_new/artifacts/fusion_weights/spatial_fcn_rl_fusion_latest.pth"
+}

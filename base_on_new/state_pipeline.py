@@ -49,7 +49,7 @@ class StateTensorPipeline:
         # --- Channel 4: free-side frontier，作为合法动作掩码 ---
         c_frontier = self._extract_frontier_mask(c_unknown, c_free)
         
-        # --- Channel 0: 版本 C gain map，仅统计从候选站位出发“可见”的 unknown 数量 ---
+        # --- Channel 0: gain map，仅统计从候选站位出发“可见”的外边界数量 ---
         # 只对 reachable frontier 赋值，其余位置保持为 0，避免无效候选污染输入。
         c_gain_map = self._build_visibility_aware_gain_map(explored_map, c_free, c_frontier, (rx, ry))
         
@@ -113,7 +113,6 @@ class StateTensorPipeline:
             return torch.tensor(gain_map, dtype=torch.float32, device=self.device)
 
         free_mask = (c_free > 0.5).cpu().numpy()
-        unknown_mask = explored_map == -1
         obstacle_mask = explored_map == 1
         max_r = int(self.sensor_range)
 
@@ -122,10 +121,10 @@ class StateTensorPipeline:
             y1 = min(h - 1, y + max_r)
             x0 = max(0, x - max_r)
             x1 = min(w - 1, x + max_r)
-            visible_count = 0
+            visible_outer_boundary_count = 0
             for ny in range(y0, y1 + 1):
                 for nx in range(x0, x1 + 1):
-                    if not unknown_mask[ny, nx]:
+                    if explored_map[ny, nx] != -1:
                         continue
                     dy = ny - y
                     dx = nx - x
@@ -133,8 +132,17 @@ class StateTensorPipeline:
                         continue
                     if self._line_of_sight_blocked(explored_map, (y, x), (ny, nx), obstacle_mask):
                         continue
-                    visible_count += 1
-            gain_map[y, x] = float(visible_count)
+                    # 外边界：-1 与 0 的交界，或 -1 与 1 的交界。
+                    is_outer_boundary = False
+                    for by, bx in ((ny - 1, nx), (ny + 1, nx), (ny, nx - 1), (ny, nx + 1)):
+                        if by < 0 or by >= h or bx < 0 or bx >= w:
+                            continue
+                        if explored_map[by, bx] in (0, 1):
+                            is_outer_boundary = True
+                            break
+                    if is_outer_boundary:
+                        visible_outer_boundary_count += 1
+            gain_map[y, x] = float(visible_outer_boundary_count)
 
         max_gain = float(gain_map.max())
         if max_gain > 0:

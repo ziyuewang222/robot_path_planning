@@ -3,7 +3,7 @@ from typing import Optional
 
 import torch
 
-from config import TEST_MAP_SIZE, max_macro_steps_for
+from config import TEST_FUSION_WEIGHTS, TEST_MAP_SIZE, max_macro_steps_for, resolve_test_fusion_weights_path
 from models import SpatialActionDecision, SpatialFCN
 from state_pipeline import StateTensorPipeline
 
@@ -20,7 +20,7 @@ class RLRunResult:
 class RLRuntime:
     """只保留 RL 推理运行逻辑，不持有环境实例。"""
 
-    def __init__(self, weight_path: str, fusion_weight_path: str, map_size: int = TEST_MAP_SIZE):
+    def __init__(self, weight_path: str, fusion_weight_path=None, map_size: int = TEST_MAP_SIZE):
         self.map_size = map_size
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.pipeline = StateTensorPipeline(map_size=map_size, device=self.device)
@@ -34,7 +34,11 @@ class RLRuntime:
         }
         current_state.update(compatible_state)
         self.policy_net.load_state_dict(current_state)
-        self.policy_net.load_fusion_weights(fusion_weight_path)
+        resolved_fusion_path = resolve_test_fusion_weights_path(fusion_weight_path)
+        if resolved_fusion_path is not None:
+            self.policy_net.load_fusion_weights(resolved_fusion_path)
+        elif TEST_FUSION_WEIGHTS is not None:
+            self.policy_net.set_fusion_weights(TEST_FUSION_WEIGHTS)
         self.policy_net.eval()
         print(f"RL 三尺度融合权重: {self.policy_net.get_fusion_weights().detach().cpu().numpy().round(4).tolist()}")
         self.decision = SpatialActionDecision(self.policy_net, epsilon=0.0, device=self.device)
