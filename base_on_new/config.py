@@ -72,7 +72,7 @@ DERIVED_LEARNING_RATE = 5e-5
 # 例如 [1, 0, 0] 表示完全信任高分辨率分支。
 # TEST_CHECKPOINT_PATH = LATEST_CHECKPOINT_PATH
 TEST_CHECKPOINT_PATH = "artifacts/runs/spatial_fcn_rl_20260714_022947/checkpoints/best_checkpoint.pth"
-TEST_FUSION_WEIGHTS = (0.4,0.2,0.4)
+TEST_FUSION_WEIGHTS = (0.3,0.2,0.5)
 # TEST_FUSION_WEIGHTS_PATH = "artifacts/runs/spatial_fcn_rl_20260712_075202/fusion_weights/best_fusion_weights.pth"
 TEST_FUSION_WEIGHTS_PATH =  None
 # TEST_FUSION_WEIGHTS_PATH = LATEST_FUSION_WEIGHTS_PATH
@@ -133,13 +133,13 @@ RECENT_REPEAT_PENALTY_SCALE = 1.8
 SUCCESS_BONUS_PER_AREA = 0.0008
 
 TRAIN_MAX_MACRO_STEPS = 60
-TEST_SEED = 50
+TEST_SEED = 52
 # 地图生成器：运行前修改此项切换逻辑
 #   "room"            -> 固定尺寸房间 + 走廊 + 房间内零星障碍物
 #   "dynamic_room"    -> 房间尺寸随地图变大，较大房间内含桌子/隔断类障碍物
 #   "easy_big_room"   -> 3 个大房间，拓扑更简单，少量桌椅式障碍物
 #   "random"          -> 固定拓扑 + 全图随机散落障碍物
-MAP_GENERATOR = "room"
+MAP_GENERATOR = "easy_big_room"
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +147,7 @@ MAP_GENERATOR = "room"
 # ---------------------------------------------------------------------------
 
 CORRIDOR_WIDTH = 5
-EASY_BIG_ROOM_CORRIDOR_WIDTH = 15
+EASY_BIG_ROOM_CORRIDOR_WIDTH = 4
 ROOM_MIN_SIZE = 22
 ROOM_MAX_SIZE = 32
 ROOM_PADDING = 3

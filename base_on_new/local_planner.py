@@ -2,7 +2,7 @@ import heapq
 
 
 class AStarPlanner:
-    def __init__(self, fog_penalty=2.0):
+    def __init__(self, fog_penalty=0.8):
         # 4方向移动：上下左右
         self.motions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
         # 进入迷雾区域的额外代价，越大越倾向走已知区域
