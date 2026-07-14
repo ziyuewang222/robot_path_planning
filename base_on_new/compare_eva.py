@@ -27,7 +27,6 @@ from config import (
     SENSOR_RANGE,
     TEST_CHECKPOINT_PATH,
     TEST_FUSION_WEIGHTS,
-    TEST_FUSION_WEIGHTS_PATH,
     TEST_MAP_SIZE,
     TEST_SEED,
     resolve_test_fusion_weights_path,
@@ -62,8 +61,8 @@ class DualMapVisualizer:
         self.images[1].set_data(self._to_display(rl_env.explored_map))
         self.robot_marks[0].set_data([bfs_env.robot_pos[1]], [bfs_env.robot_pos[0]])
         self.robot_marks[1].set_data([rl_env.robot_pos[1]], [rl_env.robot_pos[0]])
-        self.axes[0].set_title(f"BFS | step={step_idx} | area={bfs_stats[1]:.0f} | steps={bfs_stats[0]}")
-        self.axes[1].set_title(f"RL  | step={step_idx} | area={rl_stats[1]:.0f} | steps={rl_stats[0]}")
+        self.axes[0].set_title(f"BFS | step={step_idx} | area={bfs_stats[1]:.0f} | price={bfs_stats[0]:.0f}")
+        self.axes[1].set_title(f"RL  | step={step_idx} | area={rl_stats[1]:.0f} | price={rl_stats[0]:.0f}")
         self.fig.canvas.draw_idle()
         self.fig.canvas.flush_events()
         plt.pause(0.03)
@@ -72,19 +71,22 @@ class DualMapVisualizer:
         plt.close(self.fig)
 
 
-def _resolve_paths(args):
-    if args.use_best:
-        return str(BEST_CHECKPOINT_PATH), str(BEST_FUSION_WEIGHTS_PATH)
-    return args.weights, args.fusion_weights
+def _calc_price_of_steps(info, map_generator: str):
+    if map_generator != "easy_big_room":
+        return float(info["n_steps"])
+    room_steps = float(info.get("room_steps", 0.0))
+    corridor_steps = float(info.get("corridor_steps", 0.0))
+    return room_steps + corridor_steps * 2.0
 
 
-def _step_one_policy(env, target_coord, total_steps: int, total_area: float):
+def _step_one_policy(env, target_coord, total_steps: int, total_price_of_steps: float, total_area: float):
     next_explored, next_pos, _reward, n_steps, done, info = env.step_macro(target_coord)
     env.explored_map = next_explored
     env.robot_pos = next_pos
     total_steps += n_steps
+    total_price_of_steps += _calc_price_of_steps(info, env.map_generator)
     total_area += info["delta_area"]
-    return total_steps, total_area, done, info
+    return total_steps, total_price_of_steps, total_area, done, info
 
 
 def _run_comparison(weight_path: str, fusion_weight_path: str, show_vis: bool):
@@ -99,6 +101,7 @@ def _run_comparison(weight_path: str, fusion_weight_path: str, show_vis: bool):
     rl_runtime = RLRuntime(weight_path, fusion_weight_path, map_size=TEST_MAP_SIZE)
 
     bfs_total_steps = 0
+    bfs_total_price_of_steps = 0.0
     bfs_total_area = 0.0
     bfs_done = False
     bfs_alive = True
@@ -107,6 +110,7 @@ def _run_comparison(weight_path: str, fusion_weight_path: str, show_vis: bool):
     bfs_end_reason = "达到最大对比轮数仍未完成 95% 探索"
 
     rl_total_steps = 0
+    rl_total_price_of_steps = 0.0
     rl_total_area = 0.0
     rl_done = False
     rl_alive = True
@@ -124,7 +128,7 @@ def _run_comparison(weight_path: str, fusion_weight_path: str, show_vis: bool):
                         bfs_alive = False
                         bfs_end_reason = "BFS 找不到可达 frontier，但尚未达到 95% 探索"
                 if bfs_target is not None:
-                    bfs_total_steps, bfs_total_area, bfs_done, info = _step_one_policy(bfs_env, bfs_target, bfs_total_steps, bfs_total_area)
+                    bfs_total_steps, bfs_total_price_of_steps, bfs_total_area, bfs_done, info = _step_one_policy(bfs_env, bfs_target, bfs_total_steps, bfs_total_price_of_steps, bfs_total_area)
                     bfs_round = step_idx
                     if bfs_done:
                         bfs_end_reason = "BFS 已达到 95% 探索"
@@ -134,11 +138,11 @@ def _run_comparison(weight_path: str, fusion_weight_path: str, show_vis: bool):
 
             if rl_alive and not rl_done:
                 if rl_target is None:
-                    state_tensor, rl_target = rl_runtime.select_target(rl_env.explored_map, rl_env.robot_pos)
+                    _, rl_target = rl_runtime.select_target(rl_env.explored_map, rl_env.robot_pos)
                     if rl_target is None:
                         rl_alive = False
                 if rl_target is not None:
-                    rl_total_steps, rl_total_area, rl_done, info = _step_one_policy(rl_env, rl_target, rl_total_steps, rl_total_area)
+                    rl_total_steps, rl_total_price_of_steps, rl_total_area, rl_done, info = _step_one_policy(rl_env, rl_target, rl_total_steps, rl_total_price_of_steps, rl_total_area)
                     rl_round = step_idx
                     reached = (rl_env.robot_pos[0] == rl_target[0] and rl_env.robot_pos[1] == rl_target[1])
                     if reached or (info["blocked"] and not reached):
@@ -153,13 +157,13 @@ def _run_comparison(weight_path: str, fusion_weight_path: str, show_vis: bool):
         if visualizer is not None:
             visualizer.close()
 
-    return ("BFS", bfs_total_steps, bfs_total_area, bfs_done, bfs_round, bfs_end_reason), ("RL", rl_total_steps, rl_total_area, rl_done, rl_round, "")
+    return ("BFS", bfs_total_steps, bfs_total_price_of_steps, bfs_total_area, bfs_done, bfs_round, bfs_end_reason), ("RL", rl_total_steps, rl_total_price_of_steps, rl_total_area, rl_done, rl_round, "")
 
 
 def _print_results(bfs_result, rl_result):
     print("\n=== 对比结果 ===")
     for res in (bfs_result, rl_result):
-        print(f"{res[0]:>3} | steps={res[1]:4d} | area={res[2]:7.1f} | done={res[3]} | rounds={res[4]}")
+        print(f"{res[0]:>3} | steps={res[1]:4d} | price_of_steps={res[2]:7.1f} | area={res[3]:7.1f} | done={res[4]} | rounds={res[5]}")
     if not bfs_result[3]:
         print(f"BFS done=False 原因: {bfs_result[5]}")
 

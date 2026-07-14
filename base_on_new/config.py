@@ -71,10 +71,11 @@ DERIVED_LEARNING_RATE = 5e-5
 # 主策略权重保持默认 latest；融合权重默认直接写成三元向量常量。
 # 例如 [1, 0, 0] 表示完全信任高分辨率分支。
 # TEST_CHECKPOINT_PATH = LATEST_CHECKPOINT_PATH
-TEST_CHECKPOINT_PATH = "artifacts/runs/spatial_fcn_rl_20260713_151346/checkpoints/best_checkpoint.pth"
-TEST_FUSION_WEIGHTS = (0.6,0.2,0.2)
-# TEST_FUSION_WEIGHTS_PATH = "artifacts/runs/spatial_fcn_rl_20260713_151346/fusion_weights/best_fusion_weights.pth"
-TEST_FUSION_WEIGHTS_PATH = None
+TEST_CHECKPOINT_PATH = "artifacts/runs/spatial_fcn_rl_20260714_022947/checkpoints/best_checkpoint.pth"
+TEST_FUSION_WEIGHTS = (0.4,0.2,0.4)
+# TEST_FUSION_WEIGHTS_PATH = "artifacts/runs/spatial_fcn_rl_20260712_075202/fusion_weights/best_fusion_weights.pth"
+TEST_FUSION_WEIGHTS_PATH =  None
+# TEST_FUSION_WEIGHTS_PATH = LATEST_FUSION_WEIGHTS_PATH
 # 兼容旧代码：部分脚本还会导入这个名字。
 TEST_FUSION_WEIGHTS_FILE_PATH = TEST_FUSION_WEIGHTS_PATH
 
@@ -107,22 +108,38 @@ SENSOR_RANGE = 12
 # 状态张量中小车热力图的 sigma，保留用于兼容旧接口；当前使用归一化曼哈顿距离热力图
 SIGMA = 3.0
 
-# 奖励函数：弱化面积收益，强化少走路，并重点惩罚房间未完成就提前离开；
-# 成功到达 99.5% 探索率给一次性奖励
-AREA_REWARD_SCALE = 0.1
-STEP_PENALTY = 1.2
-COLLISION_PENALTY = 50.0
+# 奖励函数：以结构进度为主、面积增益为辅，轻惩罚重复震荡和过早离开。
+# 这些常量对应 step_macro 中的默认 reward shaping 权重。
+AREA_REWARD_SCALE = 0.035
+AREA_PROGRESS_SCALE = 1.8
+ROOM_COMPLETION_GAIN_SCALE = 95.0
+ROOM_COMPLETION_BONUS = 26.0
+ROOM_COMPLETION_BONUS_EXTRA = 18.0
+STEP_PENALTY = 0.9
+COLLISION_PENALTY = 40.0
+REPEAT_PENALTY_SCALE = 1.0
+EARLY_EXIT_PENALTY_BASE = 16.0
+EARLY_EXIT_PENALTY_UNFINISHED = 52.0
+EARLY_EXIT_PENALTY_FINISHED = 6.0
+UNFINISHED_FRONTIER_PENALTY_BASE = 6.0
+UNFINISHED_FRONTIER_PENALTY_PER_FRONTIER = 1.6
+UNFINISHED_FRONTIER_GATED_SCALE = 0.75
+FRONTIER_JUMP_PENALTY_BASE = 5.0
+FRONTIER_JUMP_PENALTY_SCALE = 0.22
+COMPLETED_ROOM_REVISIT_PENALTY = 4.0
+ABANDONED_RETURN_PENALTY = 8.0
+RECENT_REPEAT_PENALTY_SCALE = 1.8
 # 按地图面积缩放成功奖励，并在训练入口处设置上限，避免终点奖励主导 TD target。
 SUCCESS_BONUS_PER_AREA = 0.0008
 
 TRAIN_MAX_MACRO_STEPS = 60
-TEST_SEED = 800
+TEST_SEED = 50
 # 地图生成器：运行前修改此项切换逻辑
 #   "room"            -> 固定尺寸房间 + 走廊 + 房间内零星障碍物
 #   "dynamic_room"    -> 房间尺寸随地图变大，较大房间内含桌子/隔断类障碍物
 #   "easy_big_room"   -> 3 个大房间，拓扑更简单，少量桌椅式障碍物
 #   "random"          -> 固定拓扑 + 全图随机散落障碍物
-MAP_GENERATOR = "easy_big_room"
+MAP_GENERATOR = "room"
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +147,7 @@ MAP_GENERATOR = "easy_big_room"
 # ---------------------------------------------------------------------------
 
 CORRIDOR_WIDTH = 5
+EASY_BIG_ROOM_CORRIDOR_WIDTH = 15
 ROOM_MIN_SIZE = 22
 ROOM_MAX_SIZE = 32
 ROOM_PADDING = 3
@@ -213,7 +231,7 @@ def replay_buffer_size_for(map_size: int) -> int:
     return max(REPLAY_BUFFER_MIN_SIZE, int(round(REPLAY_BUFFER_BASE_SIZE * scale)))
 
 
-def max_episodes_for(map_size: int, base_size: int = 100, base_episodes: int = 300) -> int:
+def max_episodes_for(map_size: int, base_size: int = 100, base_episodes: int = 500) -> int:
     """训练 Episode 数随地图边长线性放大，100 尺寸对应 120 次。"""
     scale = map_size / base_size
     return max(base_episodes, int(round(base_episodes * scale)))

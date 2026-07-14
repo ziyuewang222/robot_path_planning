@@ -43,6 +43,9 @@ from train_monitor import (
 from train_reference_eval import TRAIN_MAP_REPEAT_EPISODES, train_seed_for_episode
 
 
+INITIAL_FUSION_WEIGHTS = (0.30, 0.32, 0.38)
+
+
 def train_main():
     print("=== 正在启动多尺度空间强化学习 (Multi-Scale Spatial FCN RL) 仿真训练引擎 ===")
 
@@ -123,6 +126,8 @@ def train_main():
 
     pipeline = StateTensorPipeline(map_size=map_size, device=device)
     trainer = SpatialQTrainer(lr=3e-4, gamma=0.98, buffer_size=replay_buffer_size, device=device)
+    trainer.policy_net.set_fusion_weights(INITIAL_FUSION_WEIGHTS)
+    trainer.sync_target_net()
     probe_states = build_probe_states(map_size=map_size, device=device)
     param_snapshot = snapshot_params(trainer.policy_net)
     previous_probe_actions = probe_actions(trainer.policy_net, probe_states, device)

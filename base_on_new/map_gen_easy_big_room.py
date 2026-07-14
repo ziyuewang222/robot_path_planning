@@ -1,7 +1,7 @@
 import numpy as np
 
 from config import (
-    CORRIDOR_WIDTH,
+    EASY_BIG_ROOM_CORRIDOR_WIDTH,
     OBS_MIN_SIZE,
     OBS_MAX_SIZE,
     OBSTACLE_PLACE_ATTEMPTS,
@@ -62,6 +62,7 @@ def build(map_size):
         "room_count": len(rooms),
         "room_size_range": (EASY_BIG_ROOM_MIN_SIZE, EASY_BIG_ROOM_MAX_SIZE),
         "target_obstacle_density": EASY_BIG_ROOM_TARGET_OBSTACLE_DENSITY,
+        "corridor_width": EASY_BIG_ROOM_CORRIDOR_WIDTH,
     }
 
 
@@ -166,7 +167,7 @@ def _add_edge(rooms, edges, i, j):
 def _carve_corridor(ground_truth, map_size, start, end):
     x1, y1 = start
     x2, y2 = end
-    half = CORRIDOR_WIDTH // 2
+    half = EASY_BIG_ROOM_CORRIDOR_WIDTH // 2
     if np.random.rand() < 0.5:
         _carve_horizontal_corridor(ground_truth, map_size, x1, x2, y1, half)
         _carve_vertical_corridor(ground_truth, map_size, y1, y2, x2, half)
@@ -178,14 +179,14 @@ def _carve_corridor(ground_truth, map_size, start, end):
 def _carve_horizontal_corridor(ground_truth, map_size, x1, x2, y, half):
     xa, xb = sorted((x1, x2))
     y0 = max(1, y - half)
-    y1 = min(map_size - 1, y - half + CORRIDOR_WIDTH)
+    y1 = min(map_size - 1, y + half + 1)
     ground_truth[xa:xb + 1, y0:y1] = 0
 
 
 def _carve_vertical_corridor(ground_truth, map_size, y1, y2, x, half):
     ya, yb = sorted((y1, y2))
     x0 = max(1, x - half)
-    x1 = min(map_size - 1, x - half + CORRIDOR_WIDTH)
+    x1 = min(map_size - 1, x + half + 1)
     ground_truth[x0:x1, ya:yb + 1] = 0
 
 

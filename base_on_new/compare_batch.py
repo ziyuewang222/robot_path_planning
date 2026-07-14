@@ -23,7 +23,6 @@ from config import (
     BEST_FUSION_WEIGHTS_PATH,
     TEST_CHECKPOINT_PATH,
     TEST_FUSION_WEIGHTS,
-    TEST_FUSION_WEIGHTS_PATH,
     MAP_GENERATOR,
     SENSOR_RANGE,
     TEST_MAP_SIZE,
@@ -36,24 +35,34 @@ from rl_runtime import RLRuntime
 NUM_COMPARE_SEEDS = 30
 
 # 随机种子起点。实际使用的种子为：SEED_START, SEED_START + 1, ...
-SEED_START = 800
+SEED_START = 50
 
 class CompareResult:
-    def __init__(self, name, total_steps, total_area, done, rounds):
+    def __init__(self, name, total_steps, total_price_of_steps, total_area, done, rounds):
         self.name = name
         self.total_steps = total_steps
+        self.total_price_of_steps = total_price_of_steps
         self.total_area = total_area
         self.done = done
         self.rounds = rounds
 
 
-def _step_one_policy(env, target_coord, total_steps: int, total_area: float):
+def _calc_price_of_steps(info, map_generator: str):
+    if map_generator != "easy_big_room":
+        return float(info["n_steps"])
+    room_steps = float(info.get("room_steps", 0.0))
+    corridor_steps = float(info.get("corridor_steps", 0.0))
+    return room_steps + corridor_steps * 2.0
+
+
+def _step_one_policy(env, target_coord, total_steps: int, total_price_of_steps: float, total_area: float):
     next_explored, next_pos, _reward, n_steps, done, info = env.step_macro(target_coord)
     env.explored_map = next_explored
     env.robot_pos = next_pos
     total_steps += n_steps
+    total_price_of_steps += _calc_price_of_steps(info, env.map_generator)
     total_area += info["delta_area"]
-    return total_steps, total_area, done, info
+    return total_steps, total_price_of_steps, total_area, done, info
 
 
 def _run_one_seed(seed: int, rl_runtime: RLRuntime):
@@ -78,6 +87,7 @@ def _run_one_seed(seed: int, rl_runtime: RLRuntime):
     bfs_planner = BFSFrontierPlanner()
 
     bfs_total_steps = 0
+    bfs_total_price_of_steps = 0.0
     bfs_total_area = 0.0
     bfs_done = False
     bfs_alive = True
@@ -85,6 +95,7 @@ def _run_one_seed(seed: int, rl_runtime: RLRuntime):
     bfs_target = None
 
     rl_total_steps = 0
+    rl_total_price_of_steps = 0.0
     rl_total_area = 0.0
     rl_done = False
     rl_alive = True
@@ -99,10 +110,11 @@ def _run_one_seed(seed: int, rl_runtime: RLRuntime):
                 if bfs_target is None:
                     bfs_alive = False
             if bfs_target is not None:
-                bfs_total_steps, bfs_total_area, bfs_done, info = _step_one_policy(
+                bfs_total_steps, bfs_total_price_of_steps, bfs_total_area, bfs_done, info = _step_one_policy(
                     bfs_env,
                     bfs_target,
                     bfs_total_steps,
+                    bfs_total_price_of_steps,
                     bfs_total_area,
                 )
                 bfs_round = step_idx
@@ -116,10 +128,11 @@ def _run_one_seed(seed: int, rl_runtime: RLRuntime):
                 if rl_target is None:
                     rl_alive = False
             if rl_target is not None:
-                rl_total_steps, rl_total_area, rl_done, info = _step_one_policy(
+                rl_total_steps, rl_total_price_of_steps, rl_total_area, rl_done, info = _step_one_policy(
                     rl_env,
                     rl_target,
                     rl_total_steps,
+                    rl_total_price_of_steps,
                     rl_total_area,
                 )
                 rl_round = step_idx
@@ -130,8 +143,8 @@ def _run_one_seed(seed: int, rl_runtime: RLRuntime):
         if (not bfs_alive or bfs_done) and (not rl_alive or rl_done):
             break
 
-    bfs_result = CompareResult("BFS", bfs_total_steps, bfs_total_area, bfs_done, bfs_round)
-    rl_result = CompareResult("RL", rl_total_steps, rl_total_area, rl_done, rl_round)
+    bfs_result = CompareResult("BFS", bfs_total_steps, bfs_total_price_of_steps, bfs_total_area, bfs_done, bfs_round)
+    rl_result = CompareResult("RL", rl_total_steps, rl_total_price_of_steps, rl_total_area, rl_done, rl_round)
     return bfs_result, rl_result
 
 
@@ -147,18 +160,19 @@ def _print_summary(results):
 
     for item in valid_results:
         seed = item["seed"]
-        bfs_steps = item["bfs"].total_steps
-        rl_steps = item["rl"].total_steps
+        bfs_price = item["bfs"].total_price_of_steps
+        rl_price = item["rl"].total_price_of_steps
 
-        if rl_steps < bfs_steps:
+        if rl_price < bfs_price:
             rl_better += 1
-        elif rl_steps > bfs_steps:
+        elif rl_price > bfs_price:
             bfs_better += 1
             rl_worse_seeds.append(seed)
         else:
             tied += 1
 
-        improvement_rates.append((bfs_steps - rl_steps) / bfs_steps * 100.0)
+        if bfs_price > 0:
+            improvement_rates.append((bfs_price - rl_price) / bfs_price * 100.0)
 
     total_valid = len(valid_results)
     total_all = len(results)
@@ -170,7 +184,7 @@ def _print_summary(results):
     print(f"存在未完成情况的地图数量: {len(invalid_results)}")
 
     if total_valid > 0:
-        print("\n=== 优劣比例，按 steps 判断 ===")
+        print("\n=== 优劣比例，按 price_of_steps 判断 ===")
         print(f"RL 更优: {rl_better}/{total_valid} = {rl_better / total_valid * 100.0:.2f}%")
         print(f"BFS 更优: {bfs_better}/{total_valid} = {bfs_better / total_valid * 100.0:.2f}%")
         print(f"二者相同: {tied}/{total_valid} = {tied / total_valid * 100.0:.2f}%")
@@ -179,10 +193,10 @@ def _print_summary(results):
         print("\n没有双方均完成的有效样本，无法计算优劣比例和平均提升百分比。")
 
     if rl_worse_seeds:
-        print("\n=== RL steps 多于 BFS 的随机种子 ===")
+        print("\n=== RL price_of_steps 多于 BFS 的随机种子 ===")
         print(", ".join(str(seed) for seed in rl_worse_seeds))
     else:
-        print("\n没有出现 RL steps 多于 BFS 的有效样本。")
+        print("\n没有出现 RL price_of_steps 多于 BFS 的有效样本。")
 
     if invalid_results:
         print("\n=== 未纳入平均提升统计的地图 ===")
@@ -191,8 +205,8 @@ def _print_summary(results):
             rl = item["rl"]
             print(
                 f"seed={item['seed']} | "
-                f"BFS done={bfs.done}, steps={bfs.total_steps} | "
-                f"RL done={rl.done}, steps={rl.total_steps}"
+                f"BFS done={bfs.done}, steps={bfs.total_steps}, price_of_steps={bfs.total_price_of_steps:.0f} | "
+                f"RL done={rl.done}, steps={rl.total_steps}, price_of_steps={rl.total_price_of_steps:.0f}"
             )
 
 
@@ -231,19 +245,19 @@ def main():
         results.append({"seed": seed, "bfs": bfs_result, "rl": rl_result})
 
         if bfs_result.done and rl_result.done:
-            improvement = (bfs_result.total_steps - rl_result.total_steps) / bfs_result.total_steps * 100.0
-            verdict = "RL优" if rl_result.total_steps < bfs_result.total_steps else "BFS优" if rl_result.total_steps > bfs_result.total_steps else "相同"
+            improvement = (bfs_result.total_price_of_steps - rl_result.total_price_of_steps) / bfs_result.total_price_of_steps * 100.0
+            verdict = "RL优" if rl_result.total_price_of_steps < bfs_result.total_price_of_steps else "BFS优" if rl_result.total_price_of_steps > bfs_result.total_price_of_steps else "相同"
             print(
                 f"[{idx:02d}/{NUM_COMPARE_SEEDS}] seed={seed} | "
-                f"BFS steps={bfs_result.total_steps:4d} | "
-                f"RL steps={rl_result.total_steps:4d} | "
+                f"BFS price={bfs_result.total_price_of_steps:4.0f} | "
+                f"RL price={rl_result.total_price_of_steps:4.0f} | "
                 f"RL提升={improvement:7.2f}% | {verdict}"
             )
         else:
             print(
                 f"[{idx:02d}/{NUM_COMPARE_SEEDS}] seed={seed} | "
-                f"BFS done={bfs_result.done}, steps={bfs_result.total_steps:4d} | "
-                f"RL done={rl_result.done}, steps={rl_result.total_steps:4d} | 未纳入有效均值"
+                f"BFS done={bfs_result.done}, steps={bfs_result.total_steps:4d}, price={bfs_result.total_price_of_steps:4.0f} | "
+                f"RL done={rl_result.done}, steps={rl_result.total_steps:4d}, price={rl_result.total_price_of_steps:4.0f} | 未纳入有效均值"
             )
 
     _print_summary(results)
