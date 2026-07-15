@@ -5,22 +5,20 @@ from config import (
     SENSOR_RANGE,
     MAP_GENERATOR,
     AREA_REWARD_SCALE,
-    AREA_PROGRESS_SCALE,
-    ROOM_COMPLETION_GAIN_SCALE,
     ROOM_COMPLETION_BONUS,
     ROOM_COMPLETION_BONUS_EXTRA,
+    ROOM_COMPLETION_POTENTIAL_SCALE,
+    ROOM_COMPLETION_POTENTIAL_K1,
+    ROOM_COMPLETION_POTENTIAL_K2,
+    ROOM_COMPLETION_POTENTIAL_K3,
+    ROOM_COMPLETION_POTENTIAL_T1,
+    ROOM_COMPLETION_POTENTIAL_T2,
     STEP_PENALTY,
+    PATH_KNOWN_CELL_PENALTY_SCALE,
     COLLISION_PENALTY,
     EARLY_EXIT_PENALTY_BASE,
     EARLY_EXIT_PENALTY_UNFINISHED,
     EARLY_EXIT_PENALTY_FINISHED,
-    UNFINISHED_FRONTIER_PENALTY_BASE,
-    UNFINISHED_FRONTIER_PENALTY_PER_FRONTIER,
-    UNFINISHED_FRONTIER_GATED_SCALE,
-    FRONTIER_JUMP_PENALTY_BASE,
-    FRONTIER_JUMP_PENALTY_SCALE,
-    COMPLETED_ROOM_REVISIT_PENALTY,
-    ABANDONED_RETURN_PENALTY,
     RECENT_REPEAT_PENALTY_SCALE,
 )
 from map_generator import build_map, sample_spawn
@@ -124,7 +122,7 @@ class GridWorldEnv:
         path_blocked = False
 
         path = self.planner.plan(self.explored_map, self.robot_pos, target_coord)
-
+        path_known_cell_steps = 0
         if path is None or len(path) <= 1:
             path_blocked = True
             n_steps = 1
@@ -145,6 +143,9 @@ class GridWorldEnv:
 
                 _, _, collision = self.step(act)
                 n_steps += 1
+
+                if self.explored_map[self.robot_pos[0], self.robot_pos[1]] == 0:
+                    path_known_cell_steps += 1
 
                 if self.map_generator == "easy_big_room":
                     curr_room = self._locate_room(tuple(self.robot_pos))
@@ -174,16 +175,10 @@ class GridWorldEnv:
         delta_area_outside_current_room = max(0.0, delta_area - delta_area_current_room)
 
         room_completion_bonus = 0.0
-        completion_progress_reward = 0.0
+        room_completion_potential_reward = 0.0
         early_exit_penalty = 0.0
-        unfinished_frontier_penalty = 0.0
-        frontier_jump_penalty = 0.0
-        revisit_penalty = 0.0
-        completed_room_revisit_penalty = 0.0
-        abandoned_return_penalty = 0.0
         recent_repeat_penalty = self._recent_repeat_penalty(tuple(self.robot_pos))
         area_reward = area_reward_scale * delta_area
-        area_progress_reward = AREA_PROGRESS_SCALE * (delta_area / (n_steps + 1.0))
 
         near_frontier_score, near_frontier_dist = self._near_frontier_gain_score(robot_pos_before, radius=max(20, self.sensor_range * 2), top_k=5)
         target_frontier_score, target_frontier_dist = self._near_frontier_gain_score(tuple(target_coord), radius=self.sensor_range, top_k=3)
@@ -196,52 +191,42 @@ class GridWorldEnv:
             path_left_current_room = room_after != room_before
 
             if target_left_current_room or path_left_current_room:
+                completion_factor = max(0.0, min(1.0, before_ratio))
+                unfinished_factor = 1.0 - completion_factor
+
                 if current_room_unfinished:
-                    early_exit_penalty += EARLY_EXIT_PENALTY_BASE + EARLY_EXIT_PENALTY_UNFINISHED * (1.0 - before_ratio)
+                    # 越早离开惩罚越重，50% 左右离开会明显比 80% 左右离开更亏。
+                    early_exit_penalty += EARLY_EXIT_PENALTY_BASE + EARLY_EXIT_PENALTY_UNFINISHED * unfinished_factor
+                    early_exit_penalty += 45.0 * (unfinished_factor ** 2)
                 else:
-                    early_exit_penalty += EARLY_EXIT_PENALTY_FINISHED + 0.5 * EARLY_EXIT_PENALTY_FINISHED * max(0.0, 1.0 - before_ratio)
+                    # 基本完成后离开仍保留小惩罚，避免策略在刚接近完成时立刻跳走。
+                    early_exit_penalty += EARLY_EXIT_PENALTY_FINISHED + 0.5 * EARLY_EXIT_PENALTY_FINISHED * max(0.0, completion_factor)
+                    early_exit_penalty -= 6.0 * max(0.0, completion_factor - 0.995)
 
-                if room_frontiers_before > 0:
-                    frontier_pressure = min(float(room_frontiers_before), 20.0)
-                    frontier_completion_gate = UNFINISHED_FRONTIER_GATED_SCALE + (1.0 - UNFINISHED_FRONTIER_GATED_SCALE) * before_ratio
-                    unfinished_frontier_penalty = (
-                        UNFINISHED_FRONTIER_PENALTY_BASE
-                        + UNFINISHED_FRONTIER_PENALTY_PER_FRONTIER * frontier_pressure
-                    ) * frontier_completion_gate
-                    if before_ratio < 0.995:
-                        self.abandoned_rooms.add(room_before)
+                if before_ratio < 0.995:
+                    self.abandoned_rooms.add(room_before)
 
-            if near_frontier_dist is not None and target_frontier_dist is not None:
-                if target_frontier_dist > near_frontier_dist + max(6.0, self.sensor_range * 0.5):
-                    frontier_jump_penalty = FRONTIER_JUMP_PENALTY_BASE + FRONTIER_JUMP_PENALTY_SCALE * (target_frontier_dist - near_frontier_dist)
+                if before_ratio < 0.995:
+                    self.abandoned_rooms.add(room_before)
 
             if room_after == room_before:
-                completion_progress_reward = ROOM_COMPLETION_GAIN_SCALE * max(0.0, after_ratio - before_ratio)
+                before_potential = self._room_completion_potential(before_ratio)
+                after_potential = self._room_completion_potential(after_ratio)
+                room_completion_potential_reward = ROOM_COMPLETION_POTENTIAL_SCALE * max(0.0, after_potential - before_potential)
 
             if before_ratio < 0.995 and after_ratio >= 0.995:
                 room_completion_bonus = ROOM_COMPLETION_BONUS + ROOM_COMPLETION_BONUS_EXTRA * max(0.0, after_ratio - 0.95)
                 self.completed_rooms.add(room_before)
                 self.abandoned_rooms.discard(room_before)
 
-        if room_after in self.completed_rooms:
-            completed_room_revisit_penalty = COMPLETED_ROOM_REVISIT_PENALTY
-
-        if room_after in self.abandoned_rooms and room_after != room_before:
-            abandoned_return_penalty = ABANDONED_RETURN_PENALTY
-
-        room_progress_bonus = completion_progress_reward + room_completion_bonus
+        room_progress_bonus = room_completion_potential_reward + room_completion_bonus
+        path_known_cell_penalty = PATH_KNOWN_CELL_PENALTY_SCALE * path_known_cell_steps
         macro_reward = (
             area_reward
-            + area_progress_reward
-            + 150.0 * room_completion_gain
             + room_progress_bonus
             - penalty_step * n_steps
+            - path_known_cell_penalty
             - early_exit_penalty
-            - unfinished_frontier_penalty
-            - revisit_penalty
-            - completed_room_revisit_penalty
-            - abandoned_return_penalty
-            - frontier_jump_penalty
             - recent_repeat_penalty * RECENT_REPEAT_PENALTY_SCALE
         )
         if collision_occurred or path_blocked:
@@ -258,8 +243,6 @@ class GridWorldEnv:
             'n_steps': n_steps,
             'room_steps': room_steps,
             'corridor_steps': corridor_steps,
-            'room_steps': room_steps,
-            'corridor_steps': corridor_steps,
             'collision': collision_occurred,
             'blocked': path_blocked,
             'room_before': room_before,
@@ -272,13 +255,11 @@ class GridWorldEnv:
             'delta_area_current_room': delta_area_current_room,
             'delta_area_outside_current_room': delta_area_outside_current_room,
             'area_reward': area_reward,
-            'completion_progress_reward': completion_progress_reward,
+            'room_completion_potential_reward': room_completion_potential_reward,
+            'room_completion_bonus': room_completion_bonus,
+            'path_known_cell_steps': path_known_cell_steps,
+            'path_known_cell_penalty': path_known_cell_penalty,
             'early_exit_penalty': early_exit_penalty,
-            'unfinished_frontier_penalty': unfinished_frontier_penalty,
-            'revisit_penalty': revisit_penalty,
-            'completed_room_revisit_penalty': completed_room_revisit_penalty,
-            'abandoned_return_penalty': abandoned_return_penalty,
-            'frontier_jump_penalty': frontier_jump_penalty,
             'recent_repeat_penalty': recent_repeat_penalty,
             'near_frontier_score': near_frontier_score,
             'near_frontier_dist': near_frontier_dist,
@@ -346,6 +327,21 @@ class GridWorldEnv:
         known_obstacle = np.sum(patch == 1)
         known = known_free + known_obstacle
         return float(known) / float(patch.size)
+
+    def _room_completion_potential(self, ratio):
+        ratio = float(np.clip(ratio, 0.0, 1.0))
+        if ratio <= ROOM_COMPLETION_POTENTIAL_T1:
+            return ROOM_COMPLETION_POTENTIAL_K1 * ratio
+        if ratio <= ROOM_COMPLETION_POTENTIAL_T2:
+            return (
+                ROOM_COMPLETION_POTENTIAL_K1 * ROOM_COMPLETION_POTENTIAL_T1
+                + ROOM_COMPLETION_POTENTIAL_K2 * (ratio - ROOM_COMPLETION_POTENTIAL_T1)
+            )
+        return (
+            ROOM_COMPLETION_POTENTIAL_K1 * ROOM_COMPLETION_POTENTIAL_T1
+            + ROOM_COMPLETION_POTENTIAL_K2 * (ROOM_COMPLETION_POTENTIAL_T2 - ROOM_COMPLETION_POTENTIAL_T1)
+            + ROOM_COMPLETION_POTENTIAL_K3 * (ratio - ROOM_COMPLETION_POTENTIAL_T2)
+        )
 
     def _room_known_delta(self, newly_known, room_idx):
         if room_idx is None or not self.rooms:

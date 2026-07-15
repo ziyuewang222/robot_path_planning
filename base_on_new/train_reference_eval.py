@@ -8,7 +8,7 @@ from bfs import BFSFrontierPlanner, max_bfs_compare_rounds
 from grid_env import GridWorldEnv
 from models import SpatialActionDecision
 
-TRAIN_MAP_REPEAT_EPISODES = 3
+TRAIN_MAP_REPEAT_EPISODES = 5
 REFERENCE_EVAL_INTERVAL = 20
 REFERENCE_SEED_START = 50
 REFERENCE_SEED_COUNT = 30
