@@ -134,8 +134,21 @@ RECENT_REPEAT_PENALTY_SCALE = 2.2
 # 按地图面积缩放成功奖励，并在训练入口处设置上限，避免终点奖励主导 TD target.
 SUCCESS_BONUS_PER_AREA = 0.0008
 
+# ---------------------------------------------------------------------------
+# 传统启发式前沿选择权重
+# ---------------------------------------------------------------------------
+# 仅用于 legacy/core/heuristic.py 中的 frontier 评分融合。
+HEURISTIC_BFS_WEIGHT = 10
+HEURISTIC_FRONTIER_CLASS_PENALTY = 100
+HEURISTIC_FRONTIER_CLASS_COVERAGE_THRESHOLD = 0.93
+HEURISTIC_TURN_WEIGHT = 1
+HEURISTIC_OBS_WEIGHT = 8
+
 TRAIN_MAX_MACRO_STEPS = 60
-TEST_SEED = 5500
+TEST_SEED = 41
+# 探索完成阈值：已探索自由栅格占 ground_truth 中自由栅格的比例达到该值时，认为本轮探索完成
+EXPLORATION_SUCCESS_THRESHOLD = 0.995
+# 效果好的随机种子：55010，1,4(双好),7，8，9，10（双好）11（双好）1-11全胜收官，43（双好）
 # 地图生成器：运行前修改此项切换逻辑
 #   "room"            -> 固定尺寸房间 + 走廊 + 房间内零星障碍物
 #   "dynamic_room"    -> 房间尺寸随地图变大，较大房间内含桌子/隔断类障碍物

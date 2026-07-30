@@ -1,4 +1,3 @@
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -21,9 +20,13 @@ class SemanticUNet(nn.Module):
         e1 = self.enc1(x)
         e2 = self.enc2(e1)
         e3 = self.enc3(e2)
-        
-        d2 = self.dec2(e3)
+
+        d2 = self.dec2[0](e3)
+        d2 = F.interpolate(d2, size=e2.shape[-2:], mode='bilinear', align_corners=False)
+        d2 = self.dec2[1:](d2)
         # 引入特征融合（残差连接）
-        d1 = self.dec1(d2 + e2)
+        d1 = self.dec1[0](d2 + e2)
+        d1 = F.interpolate(d1, size=e1.shape[-2:], mode='bilinear', align_corners=False)
+        d1 = self.dec1[1:](d1)
         out = self.final(d1 + e1)
         return out

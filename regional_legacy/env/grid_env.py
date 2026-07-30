@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from core.a_star import AStarPlanner
-from config import SENSOR_RANGE, MAP_GENERATOR
+from config import SENSOR_RANGE, MAP_GENERATOR, EXPLORATION_SUCCESS_THRESHOLD
 from map_generator import build_map, sample_spawn
 
 
@@ -43,7 +43,7 @@ class GridWorldEnv:
         self.robot_plot = None
 
         self.planner = AStarPlanner()
-        self.exploration_success_threshold = 0.995
+        self.exploration_success_threshold = EXPLORATION_SUCCESS_THRESHOLD
 
     def reset(self):
         if self.seed is not None:
