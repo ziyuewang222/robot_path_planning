@@ -18,8 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from config import DEFAULT_MAP_SIZE, MAP_GENERATOR, SENSOR_RANGE, TEST_SEED, resolve_test_checkpoint_path
 from core.cv_extractor import SemanticExtractor
-from core.heuristic import score_frontiers
-from core.pretreatment import build_frontier_mask
+from core.explorer_policy import decide_frontier
 from env.grid_env import GridWorldEnv
 
 
@@ -28,8 +27,8 @@ VISUALIZE_MAP_SIZE = DEFAULT_MAP_SIZE
 VISUALIZE_SEED = TEST_SEED
 INPUT_CMAP = ListedColormap(["#3b3b3b", "#f4d03f", "#9aa0a6"])
 INPUT_NORM = BoundaryNorm([-1.5, -0.5, 0.5, 1.5], INPUT_CMAP.N)
-SEMANTIC_CMAP = ListedColormap(["#202020", "#2e86de", "#f4d03f"])
-SEMANTIC_NORM = BoundaryNorm([-0.5, 0.5, 1.5, 2.5], SEMANTIC_CMAP.N)
+SEMANTIC_CMAP = ListedColormap(["#000000", "#202020", "#2e86de", "#f4d03f"])
+SEMANTIC_NORM = BoundaryNorm([-1.5, -0.5, 0.5, 1.5, 2.5], SEMANTIC_CMAP.N)
 SCORE_CMAP = plt.get_cmap("magma").copy(); SCORE_CMAP.set_bad(alpha=0.0)
 
 
@@ -56,6 +55,12 @@ class PolicyVisualizer:
         return (not self.closed) and plt.fignum_exists(self.fig.number)
 
     @staticmethod
+    def _known_semantic_display(semantic_map: np.ndarray, explored_map: np.ndarray) -> np.ndarray:
+        display = np.array(semantic_map, dtype=np.int64, copy=True)
+        display[explored_map == -1] = -1
+        return display
+
+    @staticmethod
     def _score_display(scores: np.ndarray, frontier_mask: np.ndarray) -> np.ndarray:
         display = np.array(scores, dtype=np.float32, copy=True)
         display[frontier_mask != 1] = np.nan
@@ -75,7 +80,7 @@ class PolicyVisualizer:
             self.closed = True
             return False
         self.input_img.set_data(explored_map)
-        self.semantic_img.set_data(semantic_map)
+        self.semantic_img.set_data(self._known_semantic_display(semantic_map, explored_map))
         self.score_bg.set_data(explored_map)
         self.score_img.set_data(self._score_display(score_map, frontier_mask))
         for mark in self.robot_marks:
@@ -121,8 +126,10 @@ def evaluate_policy(model_path: Path, map_size: int, seed: int | None = None) ->
     try:
         while True:
             semantic_map = semantic_extractor.predict(explored_map)
-            frontier_mask = build_frontier_mask(explored_map)
-            chosen_frontier, score_map = score_frontiers(explored_map, frontier_mask, env.robot_pos, semantic_map)
+            decision = decide_frontier(explored_map, env.robot_pos, semantic_map)
+            chosen_frontier = decision.chosen_frontier
+            score_map = decision.score_map
+            frontier_mask = decision.frontier_mask
             chosen_score = None if chosen_frontier is None else float(score_map[chosen_frontier[0], chosen_frontier[1]])
 
             if not visualizer.update(explored_map, semantic_map, score_map, frontier_mask, env.robot_pos, step_idx, chosen_frontier, chosen_score, total_area):

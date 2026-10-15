@@ -7,7 +7,7 @@ import torch.optim as optim
 import torch.multiprocessing as mp
 from tqdm import tqdm
 
-from config import DEFAULT_MAP_SIZE, MAP_GENERATOR, SENSOR_RANGE, TEST_SEED, resolve_test_checkpoint_path, resolve_test_fusion_weights_path
+from config import DEFAULT_MAP_SIZE, MAP_GENERATOR, SENSOR_RANGE, TEST_SEED, resolve_test_checkpoint_path
 from core.models import SemanticUNet
 from env.grid_env import GridWorldEnv
 from parallel_worker import data_collection_worker
@@ -53,7 +53,6 @@ def train_main():
     
     model = SemanticUNet(in_channels=1, num_classes=3).to(device)
     print(f"默认 checkpoint 解析为: {resolve_test_checkpoint_path()}")
-    print(f"默认融合权重解析为: {resolve_test_fusion_weights_path()}")
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     criterion = nn.CrossEntropyLoss()
     memory = SimpleReplayBuffer(capacity=buffer_capacity)

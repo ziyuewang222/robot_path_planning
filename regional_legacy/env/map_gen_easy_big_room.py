@@ -1,7 +1,8 @@
 import numpy as np
 
 from config import (
-    EASY_BIG_ROOM_CORRIDOR_WIDTH,
+    EASY_BIG_ROOM_CORRIDOR_WIDTH_MAX,
+    EASY_BIG_ROOM_CORRIDOR_WIDTH_MIN,
     OBS_MIN_SIZE,
     OBS_MAX_SIZE,
     OBSTACLE_PLACE_ATTEMPTS,
@@ -25,6 +26,10 @@ def build(map_size):
 
     for _ in range(EASY_BIG_ROOM_ATTEMPTS):
         ground_truth = np.ones((map_size, map_size), dtype=np.int8)
+        corridor_width = np.random.randint(
+            EASY_BIG_ROOM_CORRIDOR_WIDTH_MIN,
+            EASY_BIG_ROOM_CORRIDOR_WIDTH_MAX + 1,
+        )
         rooms = _generate_rooms(map_size)
         if len(rooms) < EASY_BIG_ROOM_COUNT:
             continue
@@ -32,7 +37,7 @@ def build(map_size):
         for room in rooms:
             _carve_room(ground_truth, room)
 
-        room_graph = _connect_rooms(ground_truth, map_size, rooms)
+        room_graph = _connect_rooms(ground_truth, map_size, rooms, corridor_width)
         for room in rooms:
             _place_room_obstacles(ground_truth, room)
 
@@ -42,7 +47,7 @@ def build(map_size):
         obstacle_density = _obstacle_density_score(ground_truth, rooms)
         score = corridor_penalty + size_penalty + obstacle_density
 
-        candidate = (ground_truth, rooms, room_graph, free_area)
+        candidate = (ground_truth, rooms, room_graph, free_area, corridor_width)
         if best_score is None or score < best_score:
             best_candidate = candidate
             best_score = score
@@ -52,15 +57,16 @@ def build(map_size):
 
     if best_candidate is None:
         ground_truth = np.ones((map_size, map_size), dtype=np.int8)
-        margin = max(2, EASY_BIG_ROOM_CORRIDOR_WIDTH + 1)
+        margin = max(2, EASY_BIG_ROOM_CORRIDOR_WIDTH_MIN + 1)
         x1, x2 = margin, max(margin + 1, map_size - margin - 1)
         y1, y2 = margin, max(margin + 1, map_size - margin - 1)
         ground_truth[x1:x2, y1:y2] = 0
         rooms = [{"bbox": (margin, margin, x2 - x1 - 2, y2 - y1 - 2), "degree": 0, "neighbors": set()}]
         room_graph = []
         free_area = int(np.sum(ground_truth == 0))
+        corridor_width = EASY_BIG_ROOM_CORRIDOR_WIDTH_MIN
     else:
-        ground_truth, rooms, room_graph, free_area = best_candidate
+        ground_truth, rooms, room_graph, free_area, corridor_width = best_candidate
 
     for room in rooms:
         room.setdefault("degree", 0)
@@ -73,7 +79,7 @@ def build(map_size):
         "room_count": len(rooms),
         "room_size_range": (EASY_BIG_ROOM_MIN_SIZE, EASY_BIG_ROOM_MAX_SIZE),
         "target_obstacle_density": EASY_BIG_ROOM_TARGET_OBSTACLE_DENSITY,
-        "corridor_width": EASY_BIG_ROOM_CORRIDOR_WIDTH,
+        "corridor_width": corridor_width,
     }
 
 
@@ -157,7 +163,7 @@ def _room_center(room):
     return x + 1 + w // 2, y + 1 + h // 2
 
 
-def _connect_rooms(ground_truth, map_size, rooms):
+def _connect_rooms(ground_truth, map_size, rooms, corridor_width):
     if len(rooms) < 2:
         return []
 
@@ -169,7 +175,7 @@ def _connect_rooms(ground_truth, map_size, rooms):
     for i in range(len(order) - 1):
         a = order[i]
         b = order[i + 1]
-        _carve_corridor(ground_truth, map_size, centers[a], centers[b])
+        _carve_corridor(ground_truth, map_size, centers[a], centers[b], corridor_width)
         _add_edge(rooms, edges, a, b)
 
     return list(edges)
@@ -183,10 +189,10 @@ def _add_edge(rooms, edges, i, j):
     edges.add(tuple(sorted((i, j))))
 
 
-def _carve_corridor(ground_truth, map_size, start, end):
+def _carve_corridor(ground_truth, map_size, start, end, corridor_width):
     x1, y1 = start
     x2, y2 = end
-    half = EASY_BIG_ROOM_CORRIDOR_WIDTH // 2
+    half = corridor_width // 2
     if np.random.rand() < 0.5:
         _carve_horizontal_corridor(ground_truth, map_size, x1, x2, y1, half)
         _carve_vertical_corridor(ground_truth, map_size, y1, y2, x2, half)

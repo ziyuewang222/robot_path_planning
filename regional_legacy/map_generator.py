@@ -1,14 +1,16 @@
 # 地图生成逻辑统一入口
 
-import numpy as np
-
-from env import map_gen_easy_big_room
+from env import fish_bone, map_gen_easy_big_room
 
 
 GENERATORS = {
     "easy_big_room": {
         "build": map_gen_easy_big_room.build,
         "sample_spawn": map_gen_easy_big_room.sample_spawn,
+    },
+    "fish_bone": {
+        "build": fish_bone.build,
+        "sample_spawn": fish_bone.sample_spawn,
     },
 }
 

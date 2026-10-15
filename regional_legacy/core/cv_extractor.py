@@ -9,7 +9,7 @@ import torch
 from config import TEST_CHECKPOINT_PATH
 from core.models import SemanticUNet
 
-
+  
 class SemanticExtractor:
     """加载一次测试 checkpoint，并为连续观测地图生成语义预测。"""
 

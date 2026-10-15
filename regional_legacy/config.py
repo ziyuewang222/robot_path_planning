@@ -89,12 +89,28 @@ LEGACY_CODE_DIR = LEGACY_ROOT / "prior_rubbish"
 TRAIN_MAP_SIZE = 200
 
 # 测试/部署地图尺寸（真实地图尺寸，改这一处即可）
-TEST_MAP_SIZE = 200
+TEST_MAP_SIZE =200
 
 # 统一地图尺寸入口
 # 如果你的训练和测试都希望用同一个尺寸，优先直接改下面这个值。
 # 代码中凡是需要“当前默认地图尺寸”的地方，都应优先读取它，而不是写死常数。
 DEFAULT_MAP_SIZE = TEST_MAP_SIZE
+
+# ---------------------------------------------------------------------------
+# 鱼骨地图生成（random fishbone）
+# ---------------------------------------------------------------------------
+# fish_bone 采用“一条主走廊 + 两侧随机非均匀房间切分”的方式生成地图，
+# 并复用 easy_big_room 的桌椅式障碍物放置思路。
+FISHBONE_CORRIDOR_WIDTH = 12
+FISHBONE_DOOR_MIN = 6
+FISHBONE_DOOR_MAX = 14
+FISHBONE_MIN_ROOM_WIDTH = 25
+FISHBONE_ROOM_COUNT_MIN = 3
+FISHBONE_ROOM_COUNT_MAX = 5
+FISHBONE_ROOM_MARGIN = 10
+FISHBONE_OBSTACLE_DENSITY = 0.0028
+FISHBONE_OBSTACLE_MARGIN = 3
+FISHBONE_MAX_GENERATION_ATTEMPTS = 120
 
 # 传感器视距（栅格），不随地图尺寸变化
 SENSOR_RANGE = 12
@@ -145,7 +161,7 @@ HEURISTIC_TURN_WEIGHT = 1
 HEURISTIC_OBS_WEIGHT = 8
 
 TRAIN_MAX_MACRO_STEPS = 60
-TEST_SEED = 41
+TEST_SEED = 150
 # 探索完成阈值：已探索自由栅格占 ground_truth 中自由栅格的比例达到该值时，认为本轮探索完成
 EXPLORATION_SUCCESS_THRESHOLD = 0.995
 # 效果好的随机种子：55010，1,4(双好),7，8，9，10（双好）11（双好）1-11全胜收官，43（双好）
@@ -153,8 +169,25 @@ EXPLORATION_SUCCESS_THRESHOLD = 0.995
 #   "room"            -> 固定尺寸房间 + 走廊 + 房间内零星障碍物
 #   "dynamic_room"    -> 房间尺寸随地图变大，较大房间内含桌子/隔断类障碍物
 #   "easy_big_room"   -> 3 个大房间，拓扑更简单，少量桌椅式障碍物
+#   "fish_bone"       -> 一条主走廊 + 两侧随机非均匀房间 + 室内障碍物
 #   "random"          -> 固定拓扑 + 全图随机散落障碍物
+# 只需修改这一项即可切换地图生成逻辑。
 MAP_GENERATOR = "easy_big_room"
+
+# ---------------------------------------------------------------------------
+# fish_bone 地图生成器接口参数
+# ---------------------------------------------------------------------------
+# 这些常量由 env/fish_bone.py 读取，作为鱼骨地图生成逻辑的配置接口。
+FISHBONE_CORRIDOR_WIDTH = 12
+FISHBONE_DOOR_MIN = 6
+FISHBONE_DOOR_MAX = 14
+FISHBONE_MIN_ROOM_WIDTH = 25
+FISHBONE_ROOM_COUNT_MIN = 3
+FISHBONE_ROOM_COUNT_MAX = 5
+FISHBONE_ROOM_MARGIN = 10
+FISHBONE_OBSTACLE_DENSITY = 0.0028
+FISHBONE_OBSTACLE_MARGIN = 3
+FISHBONE_MAX_GENERATION_ATTEMPTS = 120
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +195,8 @@ MAP_GENERATOR = "easy_big_room"
 # ---------------------------------------------------------------------------
 
 CORRIDOR_WIDTH = 5
-EASY_BIG_ROOM_CORRIDOR_WIDTH = 4
+EASY_BIG_ROOM_CORRIDOR_WIDTH_MIN = 8
+EASY_BIG_ROOM_CORRIDOR_WIDTH_MAX = 12
 ROOM_MIN_SIZE = 22
 ROOM_MAX_SIZE = 32
 ROOM_PADDING = 3
