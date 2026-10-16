@@ -4,7 +4,11 @@ from dataclasses import dataclass
 from typing import Optional, Sequence, Tuple
 
 import numpy as np
-from scipy.ndimage import distance_transform_edt
+
+try:  # 真机 / ROS 运行环境可能没有 scipy，缺少时退回自实现的栅格距离变换
+    from scipy.ndimage import distance_transform_edt as _scipy_edt
+except ImportError:  # pragma: no cover - 仅在无 scipy 环境触发
+    _scipy_edt = None
 
 
 @dataclass(frozen=True)
@@ -96,6 +100,48 @@ def _turn_cost(
     return costs
 
 
+def _chamfer_distance_transform(obstacle_mask: np.ndarray) -> np.ndarray:
+    """栅格到最近障碍的近似欧氏距离（chamfer 3-4 两遍扫描），用于无 scipy 环境。"""
+    height, width = obstacle_mask.shape
+    distances = np.where(obstacle_mask, 0.0, float(height + width)).astype(np.float32)
+    straight = np.float32(1.0)
+    diagonal = np.float32(2.0) ** np.float32(0.5)
+
+    for x in range(height):
+        for y in range(width):
+            best = distances[x, y]
+            if x > 0:
+                best = min(best, distances[x - 1, y] + straight)
+                if y > 0:
+                    best = min(best, distances[x - 1, y - 1] + diagonal)
+                if y < width - 1:
+                    best = min(best, distances[x - 1, y + 1] + diagonal)
+            if y > 0:
+                best = min(best, distances[x, y - 1] + straight)
+            distances[x, y] = best
+
+    for x in range(height - 1, -1, -1):
+        for y in range(width - 1, -1, -1):
+            best = distances[x, y]
+            if x < height - 1:
+                best = min(best, distances[x + 1, y] + straight)
+                if y > 0:
+                    best = min(best, distances[x + 1, y - 1] + diagonal)
+                if y < width - 1:
+                    best = min(best, distances[x + 1, y + 1] + diagonal)
+            if y < width - 1:
+                best = min(best, distances[x, y + 1] + straight)
+            distances[x, y] = best
+
+    return distances
+
+
+def _distance_to_obstacle(obstacle_mask: np.ndarray) -> np.ndarray:
+    if _scipy_edt is not None:
+        return _scipy_edt(~obstacle_mask).astype(np.float32)
+    return _chamfer_distance_transform(obstacle_mask)
+
+
 def _obstacle_cost(
     explored_map: np.ndarray,
     frontier_coords: np.ndarray,
@@ -110,7 +156,7 @@ def _obstacle_cost(
     if not np.any(obstacle_mask):
         return np.zeros(len(frontier_coords), dtype=np.float32)
 
-    distance_to_obstacle = distance_transform_edt(~obstacle_mask)
+    distance_to_obstacle = _distance_to_obstacle(obstacle_mask)
     fx = frontier_coords[:, 0]
     fy = frontier_coords[:, 1]
     distance = distance_to_obstacle[fx, fy].astype(np.float32)

@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>regional_explorer</name>
+  <version>0.1.0</version>
+  <description>
+    区域级几何启发式二维栅格自主探索节点：
+    订阅 nav_msgs/OccupancyGrid 与 TF 位姿，输出下一个前沿目标点（geometry_msgs/PoseStamped）
+    以及到该目标的初步 A* 路径（nav_msgs/Path，未做平滑）。
+  </description>
+  <maintainer email="wzy@todo.todo">wzy</maintainer>
+  <license>MIT</license>
+
+  <depend>rclpy</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
