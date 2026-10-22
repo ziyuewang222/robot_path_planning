@@ -12,7 +12,7 @@ from config import (
     HEURISTIC_FRONTIER_CLASS_PENALTY,
     HEURISTIC_OBS_WEIGHT,
     HEURISTIC_TURN_WEIGHT,
-    SENSOR_RANGE,
+    SAFE_ENVELOPE_CELLS,
     TEST_MAP_SIZE,
 )
 from core.cv_extractor import build_semantic_map
@@ -89,7 +89,9 @@ def _obstacle_penalty(explored_map: np.ndarray, frontier_coords: np.ndarray) -> 
     f_x = frontier_coords[:, 0]
     f_y = frontier_coords[:, 1]
     f_dist = dist_to_obs[f_x, f_y].astype(np.float32)
-    safe_dist = float(SENSOR_RANGE * 0.5)
+    # 安全距离取真机车体安全包络半径（0.25 m = 5 格），来源「9.15 组会真实数据映射」。
+    # 旧实现用 SENSOR_RANGE * 0.5 派生：SENSOR_RANGE 升到真机值 160 后会被算成 80 格，语义错误。
+    safe_dist = float(SAFE_ENVELOPE_CELLS)
     if safe_dist <= 1e-6:
         return np.zeros((len(frontier_coords),), dtype=np.float32)
     penalties = np.clip(1.0 - (f_dist / safe_dist), 0.0, 1.0)

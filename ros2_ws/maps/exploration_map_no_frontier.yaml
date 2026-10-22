@@ -1,0 +1,6 @@
+image: exploration_map_no_frontier.pgm
+resolution: 0.05000000074505806
+origin: [-14.891617, -10.895344, 0.000000]
+negate: 0
+occupied_thresh: 0.65
+free_thresh: 0.196

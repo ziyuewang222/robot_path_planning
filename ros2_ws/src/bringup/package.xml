@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>bringup</name>
+  <version>0.1.0</version>
+  <description>
+    系统级一键联调入口（Step 4）：
+    用一条 launch 把 Gazebo 仿真、Cartographer 建图、区域级前沿探索与路径跟随控制
+    串成完整回路。
+  </description>
+  <maintainer email="wzy@todo.todo">wzy</maintainer>
+  <license>MIT</license>
+
+  <exec_depend>gazebo_modele</exec_depend>
+  <exec_depend>nav_slam</exec_depend>
+  <exec_depend>regional_explorer</exec_depend>
+  <exec_depend>path_follower</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <!-- ackermann_msgs 为可选依赖（真机底盘用阿克曼接口时才需要），
+       刻意不写成硬 exec_depend，避免本机 Foxy 未安装时影响整包构建。 -->
+  <exec_depend>python3-matplotlib</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

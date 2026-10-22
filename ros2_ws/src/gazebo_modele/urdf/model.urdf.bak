@@ -1,0 +1,339 @@
+<?xml version="1.0"?>
+<robot name="lio">
+
+
+  <!-- Robot Footprint -->
+  <!-- <link name="chassis_link"/> -->
+
+  <!-- <joint name="base_link_joint" type="fixed">
+    <parent link="chassis_link"/>
+    <child link="base_link"/>
+    <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
+  </joint> -->
+  <link name="base_footprint"/>
+
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0.0 0.0 0.05" rpy="0 0 0"/>
+  </joint>
+
+  <!-- base link -->
+  <link name="base_link">
+  	<visual>
+      <origin xyz="0 0 0.0" rpy="0 0 0"/>
+      <geometry>
+		<cylinder length="0.04" radius="0.10"/>
+      </geometry>
+      <material name="blue">
+      	<color rgba="0.1 0.1 1.0 0.5" /> 
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0" rpy="0 0 0"/>
+      <geometry>
+		<cylinder length="0.12" radius="0.10"/>
+      </geometry>
+      <material name="blue">
+      	<color rgba="0.1 0.1 1.0 0.5" /> 
+      </material>
+    </collision>
+    <inertial>
+      <mass value="0.1"/>
+      <inertia ixx="0.0122666" ixy="0" ixz="0" iyy="0.0122666" iyz="0" izz="0.02"/>
+    </inertial>
+  </link>
+    
+  <!-- laser link -->
+  <link name="velodyne">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.02" radius="0.02"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.0 0.0 0.0 0.5" /> 
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.02" radius="0.02"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.0 0.0 0.0 0.5" /> 
+      </material>
+    </collision>
+    <inertial>
+    <mass value="0.1"/>
+      <inertia ixx="0.000190416666667" ixy="0" ixz="0" iyy="0.0001904" iyz="0" izz="0.00036"/>
+    </inertial>
+  </link>
+  
+  <!-- laser joint -->
+  <joint name="lidar_joint" type="fixed">
+      <parent link="base_link" />
+      <child link="velodyne" />
+      <origin xyz="0 0 0.15" />
+  </joint>
+
+  <link name="navsat_link">
+  	<visual>
+      <origin xyz="0 0 0.0" rpy="0 0 0"/>
+      <geometry>
+		    <box size="0.02 0.02 0.02"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0" rpy="0 0 0"/>
+      <geometry>
+		    <box size="0.02 0.02 0.02"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.1"/>
+        <inertia ixx="0.000190416666667" ixy="0" ixz="0" iyy="0.0001904" iyz="0" izz="0.00036"/>
+      </inertial>
+  </link>
+
+  <joint name="navsat_joint" type="fixed">
+      <parent link="base_link" />
+      <child link="navsat_link" />
+      <origin xyz="0.1 0 0.1" />
+  </joint>
+
+  <link name="gps_link">
+  	<visual>
+      <origin xyz="0 0 0.0" rpy="0 0 0"/>
+      <geometry>
+		    <box size="0.02 0.02 0.02"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0" rpy="0 0 0"/>
+      <geometry>
+		    <box size="0.02 0.02 0.02"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="0.1"/>
+        <inertia ixx="0.000190416666667" ixy="0" ixz="0" iyy="0.0001904" iyz="0" izz="0.00036"/>
+      </inertial>
+  </link>
+
+  <joint name="gps_joint" type="fixed">
+      <parent link="base_link" />
+      <child link="gps_link" />
+      <origin xyz="-0.1 0 0.1" />
+  </joint>
+
+
+  <link name="left_wheel_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+        <geometry>
+          <cylinder length="0.04" radius="0.032"/>
+        </geometry>
+          <material name="black">
+            <color rgba="0.0 0.0 0.0 0.5" /> 
+          </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+        <geometry>
+          <cylinder length="0.04" radius="0.032"/>
+        </geometry>
+          <material name="black">
+            <color rgba="0.0 0.0 0.0 0.5" /> 
+          </material>
+      </collision>
+      <inertial>
+        <mass value="0.2"/>
+          <inertia ixx="0.000190416666667" ixy="0" ixz="0" iyy="0.0001904" iyz="0" izz="0.00036"/>
+        </inertial>
+  </link>
+    
+  <link name="right_wheel_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+        <geometry>
+          <cylinder length="0.04" radius="0.032"/>
+        </geometry>
+          <material name="black">
+            <color rgba="0.0 0.0 0.0 0.5" /> 
+          </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+        <geometry>
+          <cylinder length="0.04" radius="0.032"/>
+        </geometry>
+          <material name="black">
+            <color rgba="0.0 0.0 0.0 0.5" /> 
+          </material>
+      </collision>
+      <inertial>
+      <mass value="0.2"/>
+      <inertia ixx="0.000190416666667" ixy="0" ixz="0" iyy="0.0001904" iyz="0" izz="0.00036"/>
+    </inertial>
+  </link>
+    
+  <joint name="left_wheel_joint" type="continuous">
+      <parent link="base_link" />
+      <child link="left_wheel_link" />
+      <origin xyz="-0.04 0.10 -0.04" />
+      <axis xyz="0 1 0" />
+  </joint>
+
+  <joint name="right_wheel_joint" type="continuous">
+      <parent link="base_link" />
+      <child link="right_wheel_link" />
+      <origin xyz="-0.04 -0.10 -0.04" />
+      <axis xyz="0 1 0" />
+  </joint>
+
+  <link name="caster_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+        <geometry>
+            <sphere radius="0.032"/>
+        </geometry>
+          <material name="black">
+            <color rgba="0.0 0.0 0.0 0.5" /> 
+          </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+        <geometry>
+            <sphere radius="0.032"/>
+        </geometry>
+          <material name="black">
+            <color rgba="0.0 0.0 0.5" /> 
+          </material>
+      </collision>
+      <inertial>
+      <mass value="0.02"/>
+      <inertia ixx="0.000190416666667" ixy="0" ixz="0" iyy="0.0001904" iyz="0" izz="0.00036"/>
+    </inertial>
+  </link>
+    
+  <joint name="caster_joint" type="fixed">
+      <parent link="base_link" />
+      <child link="caster_link" />
+      <origin xyz="0.06 0.0 -0.041" />
+      <axis xyz="0 1 0" />
+  </joint>
+
+
+
+  <gazebo reference="caster_link">
+    <material>Gazebo/Black</material>
+  </gazebo>
+
+  <gazebo reference="caster_link">
+    <mu1 value="0.0"/>
+    <mu2 value="0.0"/>
+    <kp value="1000000.0" />
+    <kd value="10.0" />
+  </gazebo>
+
+
+  <gazebo>
+    <plugin name='diff_drive' filename='libgazebo_ros_diff_drive.so'>
+          <ros>
+            <namespace>/</namespace>
+            <remapping>cmd_vel:=cmd_vel</remapping>
+            <!-- <remapping>odom:=/lio_sam/imu/odometry</remapping> -->
+            <remapping>odom:=/odom</remapping>
+          </ros>
+          <update_rate>500</update_rate>
+          <!-- wheels -->
+          <left_joint>left_wheel_joint</left_joint>
+          <right_joint>right_wheel_joint</right_joint>
+          <!-- kinematics -->
+          <wheel_separation>0.2</wheel_separation>
+          <wheel_diameter>0.065</wheel_diameter>
+          <!-- limits -->
+          <max_wheel_torque>60</max_wheel_torque>
+          <max_wheel_acceleration>3.0</max_wheel_acceleration>
+          <!-- output -->
+          <publish_odom>true</publish_odom>
+          <publish_odom_tf>false</publish_odom_tf>
+          <publish_wheel_tf>false</publish_wheel_tf>
+          <odometry_frame>odom</odometry_frame>
+          <robot_base_frame>base_link</robot_base_frame>
+      </plugin>
+    </gazebo> 
+
+  <gazebo reference="velodyne">
+      <sensor name="ld14p_sensor" type="ray">
+        <always_on>true</always_on>
+        <visualize>true</visualize>
+        <update_rate>10</update_rate>
+        <pose>0 0 0.05 0 0 0</pose>
+        <ray>
+          <scan>
+            <horizontal>
+              <samples>720</samples>
+              <resolution>1.0</resolution>
+              <min_angle>-3.1415926</min_angle>
+              <max_angle>3.1415926</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>1</samples>
+              <resolution>1.0</resolution>
+              <min_angle>0.0</min_angle>
+              <max_angle>0.0</max_angle>
+            </vertical>
+          </scan>
+          <range>
+            <min>0.06</min>
+            <max>12.0</max>
+            <resolution>0.01</resolution>
+          </range>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.01</stddev>
+          </noise>
+        </ray>
+        <plugin name="gazebo_ros_ray_sensor" filename="libgazebo_ros_ray_sensor.so">
+          <ros>
+            <namespace>/</namespace>
+            <remapping>~/out:=/scan</remapping>
+          </ros>
+          <output_type>sensor_msgs/LaserScan</output_type>
+          <frame_name>velodyne</frame_name>
+        </plugin>
+      </sensor>
+    </gazebo>
+
+  <gazebo reference="navsat_link">
+      <sensor name="my_gps" type="gps">
+      <!-- ensure the sensor is active (required) -->
+          <always_on>true</always_on>
+          <update_rate>10</update_rate>
+          <plugin name="my_gps_plugin" filename="libgazebo_ros_gps_sensor.so">
+            <ros>
+              <!-- publish to /gps/data -->
+              <namespace>/gps1</namespace>
+              <remapping>~/out:=/gps/fix</remapping>
+            </ros>
+        </plugin>
+      </sensor>
+    </gazebo>
+
+  <gazebo reference="gps_link">
+      <sensor name="my_gpss" type="gps">
+          <always_on>true</always_on>
+          <update_rate>10</update_rate>
+          <plugin name="my_gps_plugins" filename="libgazebo_ros_gps_sensor.so">
+            <ros>
+              <namespace>/gps2</namespace>
+              <remapping>~/out:=/gps/fix2</remapping>
+            </ros>
+        </plugin>
+      </sensor>
+    </gazebo>
+
+</robot>

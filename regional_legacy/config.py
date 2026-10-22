@@ -112,8 +112,25 @@ FISHBONE_OBSTACLE_DENSITY = 0.0028
 FISHBONE_OBSTACLE_MARGIN = 3
 FISHBONE_MAX_GENERATION_ATTEMPTS = 120
 
-# 传感器视距（栅格），不随地图尺寸变化
-SENSOR_RANGE = 12
+# 真机激光雷达最大有效半径（格），不随地图尺寸变化。
+# 数值 = 真机 LD14P 有效测距上限 8.0 m / GRID_RESOLUTION 0.05 m/格 = 160 格。
+# 来源：「9.15 组会 真实数据映射」文档（物理对象：激光雷达 LD14P，有效测距 0.15 ~ 8.0 m）。
+# 硬约束：像素物理尺度锚定 GRID_RESOLUTION = 0.05 m/格，任何环节都不得改变该分辨率。
+SENSOR_RANGE = 160
+
+# ---------------------------------------------------------------------------
+# 真机基准常量（来源：「9.15 组会 真实数据映射」，r = 0.05 m/格）
+# 说明：对应真机（LD14P 激光雷达 + 阿克曼底盘 R3/Mini）的物理约束，
+#       作为后续接入真机 / 训练集学习方法的参数基准；分辨率 GRID_RESOLUTION 不可改动。
+# ---------------------------------------------------------------------------
+GRID_RESOLUTION = 0.05          # 米/格，硬约束：像素物理尺度，任何环节都不得改变
+SENSOR_BLIND_CELLS = 3          # 雷达盲区 0.15 m
+SAFE_ENVELOPE_CELLS = 5         # 车体安全包络半径 0.25 m
+MIN_TURN_RADIUS_M = 0.28        # 最小转弯半径（米）
+MIN_TURN_RADIUS_CELLS = 5.6     # 同上，换算为格
+MAX_STEER_RAD = 0.52            # 前轮最大转角 pi/6
+MAX_CURVATURE_M_INV = 3.57      # 最大曲率 1/R_min
+DECISION_RATE_HZ = 1.0          # 决策调度频率（真机 6 Hz 雷达 -> 决策 1 Hz）
 
 # 状态张量中小车热力图的 sigma，保留用于兼容旧接口；当前使用归一化曼哈顿距离热力图
 SIGMA = 3.0

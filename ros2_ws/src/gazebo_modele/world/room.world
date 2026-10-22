@@ -1,0 +1,435 @@
+<?xml version="1.0" ?>
+<!--
+  封闭矩形房间（口字型外墙 + 少量独立柱/箱体）
+
+  用途：让小车在一个"四周封闭、内部没有窄通道"的环境里从零开始跑通一次完整建图
+        （消除全部迷雾直到没有可达前沿）。
+
+  设计要点（为什么这样选尺寸）：
+    - 内净空 28 m × 20 m（x ∈ [-14, 14]，y ∈ [-10, 10]）。
+      出生点在原点 (0, 0)，激光雷达有效量程 12 m：
+        · 东/西墙距原点 14 m > 12 m  -> 开局即存在未知区域（迷雾），探索才有意义；
+        · 南/北墙距原点 10 m < 12 m  -> 开局可见，提供参照；
+        · 四角距原点约 17.2 m      -> 天然是开局迷雾。
+    - 内部只放"独立凸出物"（4 根 2×2 m 柱子 + 2 个 3×1.2 m 台子），
+      相互间距 ≥ 6 m，没有任何窄门/窄走廊。
+      原因：本项目的 path_follower 是阿克曼底盘 + 仅"前向刹车/脱困倒车"，
+            没有局部绕障能力；窄通道会让它反复顶墙卡死（3d.world 实测两次失败）。
+    - 墙面高 2 m、厚 0.3 m，四角重叠闭合，车不可能跑出。
+
+  与 3d.world 的关系：3d.world 保留不动（复杂建筑场景，可用 world:=3d.world 切回）。
+-->
+<sdf version='1.7'>
+  <world name='room'>
+
+    <light name='sun' type='directional'>
+      <cast_shadows>1</cast_shadows>
+      <pose>0 0 10 0 -0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+
+    <!-- 地面：只做承载与显示，范围远大于房间（房间由外墙封闭，车出不去） -->
+    <model name='ground_plane'>
+      <static>1</static>
+      <link name='link'>
+        <collision name='collision'>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <surface>
+            <friction>
+              <ode>
+                <mu>100</mu>
+                <mu2>50</mu2>
+              </ode>
+              <torsional>
+                <ode/>
+              </torsional>
+            </friction>
+            <contact>
+              <ode/>
+            </contact>
+            <bounce/>
+          </surface>
+          <max_contacts>10</max_contacts>
+        </collision>
+        <visual name='visual'>
+          <cast_shadows>0</cast_shadows>
+          <geometry>
+            <plane>
+              <normal>0 0 1</normal>
+              <size>100 100</size>
+            </plane>
+          </geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+    </model>
+
+    <gravity>0 0 -9.8</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type='adiabatic'/>
+    <physics type='ode'>
+      <max_step_size>0.001</max_step_size>
+      <!-- 仿真倍速（只影响"墙钟时间"，不影响仿真内行为）：
+           实际倍速 = real_time_update_rate * max_step_size / 1s = 2000 * 0.001 = 2.0。
+           因为全链路节点都用 use_sim_time=true，抬高倍速等于把整轮建图压缩到约 1/2 墙钟时间，
+           而仿真内的雷达频率(6Hz，已对齐真机)、SLAM、决策周期等时序完全不变。
+           取 2.0 而不是 3.0：实测 3.0 虽能达到（RTF≈2.995），但 Cartographer 的实时处理
+           跟不上，位姿漂移变大（长直墙段 0.6~0.9m），反而跑得更久。
+           若机器算力跟不上，Gazebo 会自动降速（实际倍速 < 2），不会出错。
+           想改回实时：把 real_time_update_rate 改回 1000。 -->
+      <real_time_factor>1</real_time_factor>
+      <real_time_update_rate>2000</real_time_update_rate>
+    </physics>
+    <scene>
+      <ambient>0.4 0.4 0.4 1</ambient>
+      <background>0.7 0.7 0.7 1</background>
+      <shadows>1</shadows>
+    </scene>
+    <wind/>
+
+    <!-- ============================================================
+         口字型外墙（内净空 28 m × 20 m，墙厚 0.3 m，高 2 m）
+         四角按 0.3 m 重叠，保证完全闭合。
+         ============================================================ -->
+    <model name='room_wall_north'>
+      <static>1</static>
+      <pose>0 10.15 1.0 0 0 0</pose>
+      <link name='Wall'>
+        <collision name='Wall_Collision'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>28.6 0.3 2.0</size></box></geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact><ode/></contact>
+            <bounce/>
+            <friction><torsional><ode/></torsional><ode/></friction>
+          </surface>
+        </collision>
+        <visual name='Wall_Visual'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>28.6 0.3 2.0</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+    </model>
+
+    <model name='room_wall_south'>
+      <static>1</static>
+      <pose>0 -10.15 1.0 0 0 0</pose>
+      <link name='Wall'>
+        <collision name='Wall_Collision'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>28.6 0.3 2.0</size></box></geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact><ode/></contact>
+            <bounce/>
+            <friction><torsional><ode/></torsional><ode/></friction>
+          </surface>
+        </collision>
+        <visual name='Wall_Visual'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>28.6 0.3 2.0</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+    </model>
+
+    <model name='room_wall_east'>
+      <static>1</static>
+      <pose>14.15 0 1.0 0 0 1.5708</pose>
+      <link name='Wall'>
+        <collision name='Wall_Collision'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>20.6 0.3 2.0</size></box></geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact><ode/></contact>
+            <bounce/>
+            <friction><torsional><ode/></torsional><ode/></friction>
+          </surface>
+        </collision>
+        <visual name='Wall_Visual'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>20.6 0.3 2.0</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+    </model>
+
+    <model name='room_wall_west'>
+      <static>1</static>
+      <pose>-14.15 0 1.0 0 0 1.5708</pose>
+      <link name='Wall'>
+        <collision name='Wall_Collision'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>20.6 0.3 2.0</size></box></geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact><ode/></contact>
+            <bounce/>
+            <friction><torsional><ode/></torsional><ode/></friction>
+          </surface>
+        </collision>
+        <visual name='Wall_Visual'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>20.6 0.3 2.0</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+    </model>
+
+    <!-- ============================================================
+         内部独立凸出物（无窄通道）：
+           4 根 2 m × 2 m 方柱 @ (±7, ±5)
+           2 个 3 m × 1.2 m 台子 @ (0, ±7)
+         相互间距均 ≥ 6 m，阿克曼底盘可轻松通过（最小转弯半径 ≈ 0.28 m）。
+         ============================================================ -->
+    <model name='room_pillar_px_py'>
+      <static>1</static>
+      <pose>7 5 1.0 0 0 0</pose>
+      <link name='Pillar'>
+        <collision name='Pillar_Collision'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>2.0 2.0 2.0</size></box></geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact><ode/></contact>
+            <bounce/>
+            <friction><torsional><ode/></torsional><ode/></friction>
+          </surface>
+        </collision>
+        <visual name='Pillar_Visual'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>2.0 2.0 2.0</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+    </model>
+
+    <model name='room_pillar_px_ny'>
+      <static>1</static>
+      <pose>7 -5 1.0 0 0 0</pose>
+      <link name='Pillar'>
+        <collision name='Pillar_Collision'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>2.0 2.0 2.0</size></box></geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact><ode/></contact>
+            <bounce/>
+            <friction><torsional><ode/></torsional><ode/></friction>
+          </surface>
+        </collision>
+        <visual name='Pillar_Visual'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>2.0 2.0 2.0</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+    </model>
+
+    <model name='room_pillar_nx_py'>
+      <static>1</static>
+      <pose>-7 5 1.0 0 0 0</pose>
+      <link name='Pillar'>
+        <collision name='Pillar_Collision'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>2.0 2.0 2.0</size></box></geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact><ode/></contact>
+            <bounce/>
+            <friction><torsional><ode/></torsional><ode/></friction>
+          </surface>
+        </collision>
+        <visual name='Pillar_Visual'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>2.0 2.0 2.0</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+    </model>
+
+    <model name='room_pillar_nx_ny'>
+      <static>1</static>
+      <pose>-7 -5 1.0 0 0 0</pose>
+      <link name='Pillar'>
+        <collision name='Pillar_Collision'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>2.0 2.0 2.0</size></box></geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact><ode/></contact>
+            <bounce/>
+            <friction><torsional><ode/></torsional><ode/></friction>
+          </surface>
+        </collision>
+        <visual name='Pillar_Visual'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>2.0 2.0 2.0</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+    </model>
+
+    <model name='room_bench_py'>
+      <static>1</static>
+      <pose>0 7 1.0 0 0 0</pose>
+      <link name='Bench'>
+        <collision name='Bench_Collision'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>3.0 1.2 2.0</size></box></geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact><ode/></contact>
+            <bounce/>
+            <friction><torsional><ode/></torsional><ode/></friction>
+          </surface>
+        </collision>
+        <visual name='Bench_Visual'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>3.0 1.2 2.0</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+    </model>
+
+    <model name='room_bench_ny'>
+      <static>1</static>
+      <pose>0 -7 1.0 0 0 0</pose>
+      <link name='Bench'>
+        <collision name='Bench_Collision'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>3.0 1.2 2.0</size></box></geometry>
+          <max_contacts>10</max_contacts>
+          <surface>
+            <contact><ode/></contact>
+            <bounce/>
+            <friction><torsional><ode/></torsional><ode/></friction>
+          </surface>
+        </collision>
+        <visual name='Bench_Visual'>
+          <pose>0 0 0 0 -0 0</pose>
+          <geometry><box><size>3.0 1.2 2.0</size></box></geometry>
+          <material>
+            <script>
+              <uri>file://media/materials/scripts/gazebo.material</uri>
+              <name>Gazebo/Grey</name>
+            </script>
+          </material>
+        </visual>
+        <self_collide>0</self_collide>
+        <enable_wind>0</enable_wind>
+        <kinematic>0</kinematic>
+      </link>
+    </model>
+
+    <gui fullscreen='0'>
+      <camera name='user_camera'>
+        <pose>0 -28 26 0 0.95 1.5708</pose>
+        <view_controller>orbit</view_controller>
+        <projection_type>perspective</projection_type>
+      </camera>
+    </gui>
+
+  </world>
+</sdf>

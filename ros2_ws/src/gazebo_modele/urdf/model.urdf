@@ -1,0 +1,388 @@
+<?xml version="1.0"?>
+<robot name="lio">
+
+
+  <!-- Robot Footprint -->
+  <!-- <link name="chassis_link"/> -->
+
+  <!-- <joint name="base_link_joint" type="fixed">
+    <parent link="chassis_link"/>
+    <child link="base_link"/>
+    <origin xyz="0.0 0.0 0.0" rpy="0 0 0"/>
+  </joint> -->
+  <link name="base_footprint"/>
+
+  <!-- base_joint：base_footprint 位于地面（z=0），base_link 抬高 0.072m。
+       与轮子 origin 的 z=-0.04 配合：轮心世界高度 = 0.072 - 0.04 = 0.032 = 轮半径，
+       即车轮最低点恰好落在 z=0（着地、不悬空、不陷地），故 z 保持 0.072 不变。 -->
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0.0 0.0 0.072" rpy="0 0 0"/>
+  </joint>
+
+  <!-- base link -->
+  <link name="base_link">
+  	<visual>
+      <origin xyz="0 0 0.0" rpy="0 0 0"/>
+      <geometry>
+		<cylinder length="0.04" radius="0.10"/>
+      </geometry>
+      <material name="blue">
+      	<color rgba="0.1 0.1 1.0 0.5" /> 
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0.0" rpy="0 0 0"/>
+      <geometry>
+		<cylinder length="0.12" radius="0.10"/>
+      </geometry>
+      <material name="blue">
+      	<color rgba="0.1 0.1 1.0 0.5" /> 
+      </material>
+    </collision>
+    <inertial>
+      <mass value="0.1"/>
+      <inertia ixx="0.0122666" ixy="0" ixz="0" iyy="0.0122666" iyz="0" izz="0.02"/>
+    </inertial>
+  </link>
+    
+  <!-- laser link -->
+  <link name="velodyne">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.02" radius="0.02"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.0 0.0 0.0 0.5" /> 
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder length="0.02" radius="0.02"/>
+      </geometry>
+      <material name="black">
+        <color rgba="0.0 0.0 0.0 0.5" /> 
+      </material>
+    </collision>
+    <inertial>
+    <mass value="0.1"/>
+      <inertia ixx="0.000190416666667" ixy="0" ixz="0" iyy="0.0001904" iyz="0" izz="0.00036"/>
+    </inertial>
+  </link>
+  
+  <!-- laser joint -->
+  <joint name="lidar_joint" type="fixed">
+      <parent link="base_link" />
+      <child link="velodyne" />
+      <origin xyz="0 0 0.15" />
+  </joint>
+
+  <!-- ==================== IMU 惯导 ==================== -->
+  <!-- imu_link：仅作为 IMU 传感器挂载点，质量/惯量取极小典型值，可调项 -->
+  <link name="imu_link">
+    <inertial>
+      <mass value="0.01"/>
+      <inertia ixx="0.000001" ixy="0" ixz="0" iyy="0.000001" iyz="0" izz="0.000001"/>
+    </inertial>
+  </link>
+
+  <!-- imu_joint：fixed 挂在 base_link 下。
+       注意 rpy 必须为 0，保证 imu_link 的 z 轴朝上、与车体同向，
+       这是 Cartographer 2D 使用 IMU 做重力对齐/yaw 约束的前提。 -->
+  <joint name="imu_joint" type="fixed">
+      <parent link="base_link" />
+      <child link="imu_link" />
+      <origin xyz="0 0 0.10" rpy="0 0 0" />
+  </joint>
+
+  <!-- ==================== 前左轮 ==================== -->
+  <link name="front_left_wheel">
+      <visual>
+        <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+        <geometry>
+          <cylinder length="0.04" radius="0.032"/>
+        </geometry>
+          <material name="black">
+            <color rgba="0.0 0.0 0.0 1.0" />
+          </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+        <geometry>
+          <cylinder length="0.04" radius="0.032"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="0.2"/>
+        <inertia ixx="0.000190416666667" ixy="0" ixz="0" iyy="0.0001904" iyz="0" izz="0.00036"/>
+      </inertial>
+  </link>
+
+  <!-- ==================== 前右轮 ==================== -->
+  <link name="front_right_wheel">
+      <visual>
+        <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+        <geometry>
+          <cylinder length="0.04" radius="0.032"/>
+        </geometry>
+          <material name="black">
+            <color rgba="0.0 0.0 0.0 1.0" />
+          </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+        <geometry>
+          <cylinder length="0.04" radius="0.032"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="0.2"/>
+        <inertia ixx="0.000190416666667" ixy="0" ixz="0" iyy="0.0001904" iyz="0" izz="0.00036"/>
+      </inertial>
+  </link>
+
+  <!-- ==================== 后左轮 ==================== -->
+  <link name="rear_left_wheel">
+      <visual>
+        <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+        <geometry>
+          <cylinder length="0.04" radius="0.032"/>
+        </geometry>
+          <material name="black">
+            <color rgba="0.0 0.0 0.0 1.0" />
+          </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+        <geometry>
+          <cylinder length="0.04" radius="0.032"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="0.2"/>
+        <inertia ixx="0.000190416666667" ixy="0" ixz="0" iyy="0.0001904" iyz="0" izz="0.00036"/>
+      </inertial>
+  </link>
+
+  <!-- ==================== 后右轮 ==================== -->
+  <link name="rear_right_wheel">
+      <visual>
+        <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+        <geometry>
+          <cylinder length="0.04" radius="0.032"/>
+        </geometry>
+          <material name="black">
+            <color rgba="0.0 0.0 0.0 1.0" />
+          </material>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="1.57079 0 0"/>
+        <geometry>
+          <cylinder length="0.04" radius="0.032"/>
+        </geometry>
+      </collision>
+      <inertial>
+        <mass value="0.2"/>
+        <inertia ixx="0.000190416666667" ixy="0" ixz="0" iyy="0.0001904" iyz="0" izz="0.00036"/>
+      </inertial>
+  </link>
+
+  <!-- ==================== 前轮转向节（steering knuckle） ==================== -->
+  <link name="front_left_steer_link">
+      <inertial>
+        <mass value="0.01"/>
+        <inertia ixx="0.000001" ixy="0" ixz="0" iyy="0.000001" iyz="0" izz="0.000001"/>
+      </inertial>
+  </link>
+
+  <link name="front_right_steer_link">
+      <inertial>
+        <mass value="0.01"/>
+        <inertia ixx="0.000001" ixy="0" ixz="0" iyy="0.000001" iyz="0" izz="0.000001"/>
+      </inertial>
+  </link>
+
+  <!-- ==================== 前轮转向关节（绕 z 轴） ==================== -->
+  <!-- 几何对齐真机实测：轴距 0.144m（x=±0.072）、轮距 0.162m（y=±0.081）。
+       转向角限位同步取真机前轮最大转角 28° = 0.489 rad，与插件 max_steer 一致。 -->
+  <joint name="front_left_steer_joint" type="revolute">
+      <parent link="base_link" />
+      <child link="front_left_steer_link" />
+      <origin xyz="0.072 0.081 -0.04" />
+      <axis xyz="0 0 1" />
+      <limit lower="-0.489" upper="0.489" effort="100" velocity="10"/>
+  </joint>
+
+  <joint name="front_right_steer_joint" type="revolute">
+      <parent link="base_link" />
+      <child link="front_right_steer_link" />
+      <origin xyz="0.072 -0.081 -0.04" />
+      <axis xyz="0 0 1" />
+      <limit lower="-0.489" upper="0.489" effort="100" velocity="10"/>
+  </joint>
+
+  <!-- ==================== 前轮滚动关节（绕 y 轴） ==================== -->
+  <joint name="front_left_wheel_joint" type="continuous">
+      <parent link="front_left_steer_link" />
+      <child link="front_left_wheel" />
+      <origin xyz="0 0 0" />
+      <axis xyz="0 1 0" />
+  </joint>
+
+  <joint name="front_right_wheel_joint" type="continuous">
+      <parent link="front_right_steer_link" />
+      <child link="front_right_wheel" />
+      <origin xyz="0 0 0" />
+      <axis xyz="0 1 0" />
+  </joint>
+
+  <!-- ==================== 后轮驱动关节 ==================== -->
+  <!-- 几何对齐真机实测：后轮 x=-0.072、y=±0.081（轴距 0.144m / 轮距 0.162m）。
+       z=-0.04 配合 base_joint 的 z=0.072 得轮心世界高度 0.032 = 轮半径，车轮恰好着地。 -->
+  <joint name="rear_left_wheel_joint" type="continuous">
+      <parent link="base_link" />
+      <child link="rear_left_wheel" />
+      <origin xyz="-0.072 0.081 -0.04" />
+      <axis xyz="0 1 0" />
+  </joint>
+
+  <joint name="rear_right_wheel_joint" type="continuous">
+      <parent link="base_link" />
+      <child link="rear_right_wheel" />
+      <origin xyz="-0.072 -0.081 -0.04" />
+      <axis xyz="0 1 0" />
+  </joint>
+
+  <!-- ==================== 阿克曼驱动插件 ==================== -->
+  <gazebo>
+    <plugin name="gazebo_ros_ackermann_drive" filename="libgazebo_ros_ackermann_drive.so">
+          <!-- 【仿真=真机 对齐登记】轴距 0.144m / 轮距 0.162m / 轮径 0.064m /
+               max_steer 0.489rad(28°) / 最高速 0.5m/s，均已对齐真机实测值。 -->
+          <ros>
+            <namespace>/</namespace>
+            <remapping>cmd_vel:=cmd_vel</remapping>
+            <remapping>odom:=/odom</remapping>
+          </ros>
+          <update_rate>100.0</update_rate>
+
+          <!-- wheels -->
+          <front_left_joint>front_left_wheel_joint</front_left_joint>
+          <front_right_joint>front_right_wheel_joint</front_right_joint>
+          <rear_left_joint>rear_left_wheel_joint</rear_left_joint>
+          <rear_right_joint>rear_right_wheel_joint</rear_right_joint>
+          <left_steering_joint>front_left_steer_joint</left_steering_joint>
+          <right_steering_joint>front_right_steer_joint</right_steering_joint>
+
+          <!-- Max absolute steer angle for tyre in radians：真机前轮最大转角 28° = 0.489rad -->
+          <max_steer>0.489</max_steer>
+          <!-- Max absolute linear speed in m/s：真机底盘上限 0.5m/s（控制端仍限 0.3m/s） -->
+          <max_speed>0.5</max_speed>
+
+          <!-- wheel separation and diameter：真机轮距 0.162m、轮径 0.064m（半径 0.032） -->
+          <wheel_separation>0.162</wheel_separation>
+          <wheel_diameter>0.064</wheel_diameter>
+
+          <!-- PID tuning（2026-10-21 开环标定结果，详见 AGENTS.md 附十五）
+               D 必须为 0：D!=0 会让插件内部 PID 输出 NaN。
+               线速度 P：0.01 的稳态其实有 0.95，但"到 90% 目标速度"要 2.18s（瞬态太慢，
+                 历史上"实际只有指令一半速度"就是这个原因）；0.3 稳态 0.999~1.000、
+                 起动仅 0.075s。P=0.4 起会有 NaN + 翻滚，故 0.3 为上限。
+               转向 P：0.1 阶跃过零 0.305s、yaw 比值仅 0.205；2.0 过零 0.055s、比值 0.515
+                 且无翻滚/无 NaN，取 2.0。注意 P-only + D=0 存在结构性欠转
+                 （即使 P=50，yaw 比值也仅 0.58），这是能力上限，不是 bug。 -->
+          <left_steering_pid_gain>2.0 0 0</left_steering_pid_gain>
+          <left_steering_i_range>0 0</left_steering_i_range>
+          <right_steering_pid_gain>2.0 0 0</right_steering_pid_gain>
+          <right_steering_i_range>0 0</right_steering_i_range>
+          <linear_velocity_pid_gain>0.3 0 0</linear_velocity_pid_gain>
+          <linear_velocity_i_range>0 0</linear_velocity_i_range>
+
+          <!-- output -->
+          <publish_odom>true</publish_odom>
+          <!-- 发布 odom->base_footprint 的 TF（真机由 EKF/底盘驱动发布同一条 TF）。
+               注意：启用后必须删掉 gazebo.launch.py 里那条"静态恒等 odom->base_footprint"，
+               否则同一条 TF 有两个发布者，会与插件动态发布的位姿打架。 -->
+          <publish_odom_tf>true</publish_odom_tf>
+          <publish_wheel_tf>false</publish_wheel_tf>
+          <publish_distance>false</publish_distance>
+          <publish_steerangle>false</publish_steerangle>
+
+          <odometry_frame>odom</odometry_frame>
+          <!-- 用 base_footprint 作为里程计基准，与真实底盘的 EKF 输出口径一致
+               （base_footprint->base_link 由静态 TF 提供 z=0.072）。 -->
+          <robot_base_frame>base_footprint</robot_base_frame>
+      </plugin>
+    </gazebo> 
+
+  <gazebo reference="velodyne">
+      <!-- 【仿真=真机 对齐登记】雷达型号 LD14：已对齐真机 6Hz 扫描频率、有效量程 0.15~8.0m、FOV 360°。
+           角分辨率保持 720 线/360° = 0.5°，未因缩量程而降低。 -->
+      <sensor name="ld14p_sensor" type="ray">
+        <always_on>true</always_on>
+        <visualize>true</visualize>
+        <!-- 对齐真机 LD14 基线扫描频率 6Hz（原 10Hz） -->
+        <update_rate>6</update_rate>
+        <pose>0 0 0.05 0 0 0</pose>
+        <ray>
+          <scan>
+            <horizontal>
+              <samples>720</samples>
+              <resolution>1.0</resolution>
+              <min_angle>-3.1415926</min_angle>
+              <max_angle>3.1415926</max_angle>
+            </horizontal>
+            <vertical>
+              <samples>1</samples>
+              <resolution>1.0</resolution>
+              <min_angle>0.0</min_angle>
+              <max_angle>0.0</max_angle>
+            </vertical>
+          </scan>
+          <range>
+            <!-- 对齐真机 LD14 物理有效量程 0.15~8.0m（驱动标称 0.15~30m，物理有效 8m） -->
+            <min>0.15</min>
+            <max>8.0</max>
+            <resolution>0.01</resolution>
+          </range>
+          <noise>
+            <type>gaussian</type>
+            <mean>0.0</mean>
+            <stddev>0.01</stddev>
+          </noise>
+        </ray>
+        <plugin name="gazebo_ros_ray_sensor" filename="libgazebo_ros_ray_sensor.so">
+          <ros>
+            <namespace>/</namespace>
+            <remapping>~/out:=/scan</remapping>
+          </ros>
+          <output_type>sensor_msgs/LaserScan</output_type>
+          <frame_name>velodyne</frame_name>
+        </plugin>
+      </sensor>
+    </gazebo>
+
+  <!-- IMU 传感器 + gazebo_ros_imu_sensor 插件，发布话题 /imu -->
+  <gazebo reference="imu_link">
+      <!-- 【仿真=真机 对齐登记】底盘板载 STM32 IMU：更新率已对齐真机 ≈20Hz（原仿真 100Hz）。 -->
+      <sensor name="imu_sensor" type="imu">
+        <always_on>true</always_on>
+        <update_rate>20</update_rate>
+        <visualize>false</visualize>
+        <plugin name="imu_plugin" filename="libgazebo_ros_imu_sensor.so">
+          <ros>
+            <namespace>/</namespace>
+            <remapping>~/out:=/imu</remapping>
+          </ros>
+          <!-- false：以世界系为姿态参考（符合 REP 145），供 Cartographer 做重力对齐 -->
+          <initial_orientation_as_reference>false</initial_orientation_as_reference>
+          <!-- 已核实 Foxy 的 libgazebo_ros_imu_sensor.so 支持该标签（通过 gazebo_ros::SensorFrameID 读取），
+               使发布消息的 frame_id 显式为 imu_link -->
+          <frame_name>imu_link</frame_name>
+        </plugin>
+      </sensor>
+    </gazebo>
+
+</robot>

@@ -25,7 +25,7 @@ HEURISTIC_CONFIG = LightHeuristicConfig(
     bfs_weight=8.0,
     turn_weight=0.35,
     obstacle_weight=1.0,
-    obstacle_safe_distance=6.0,
+    obstacle_safe_distance=5.0,
 )
 
 
