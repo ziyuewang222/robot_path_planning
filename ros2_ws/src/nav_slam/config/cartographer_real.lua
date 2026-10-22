@@ -6,8 +6,8 @@ include "trajectory_builder.lua"
 -- ----------------------------------------------------------------------------
 -- 与仿真用 cartographer.lua 的差异（真机基准见 AGENTS.md 附十 / 附十四）：
 --   * TRAJECTORY_BUILDER_2D.min_range = 0.15、max_range = 8.0、
---     missing_data_ray_length = 8.0（真机雷达 LD14P 有效量程 0.15~8.0 m；
---     仿真里是 0.12 / 12.0）。
+--     missing_data_ray_length = 7.0（真机雷达 LD14P 有效量程 0.15~8.0 m；
+--     仿真配置 cartographer.lua 同样是 0.15 / 8.0 / 7.0）。
 --   * use_imu_data = true，tracking_frame = "imu_link"：
 --     Cartographer 强制要求 IMU 与 tracking frame 共位（平移 < 1e-5），否则启动即
 --     `Check failed: The IMU frame must be colocated with the tracking frame` 崩溃。
@@ -60,10 +60,14 @@ options = {
 
 MAP_BUILDER.use_trajectory_builder_2d = true
 
--- 真机雷达 LD14P：有效量程 0.15 ~ 8.0 m（仿真为 0.12 ~ 12.0）。
+-- 真机雷达 LD14P：有效量程 0.15 ~ 8.0 m。
+-- 无回波方向按 7.0 m 空地处理（2026-10-22 决策，与仿真 cartographer.lua 一致）：
+-- 必须 < max_range 留 1 m 余量；真机上由 bringup/real_bringup.launch.py 的
+-- nav_slam/scan_no_return_filter 先把 inf/0/超量程改写为 sentinel 8.5 m，
+-- 否则 Cartographer 的 LaserScan 转换会丢弃 inf，本参数不生效。
 TRAJECTORY_BUILDER_2D.min_range = 0.15
 TRAJECTORY_BUILDER_2D.max_range = 8.0
-TRAJECTORY_BUILDER_2D.missing_data_ray_length = 8.0
+TRAJECTORY_BUILDER_2D.missing_data_ray_length = 7.0
 -- 打开 IMU：IMU 主要提供 yaw 约束与重力对齐，抑制纯激光匹配 + 常速外推带来的位姿漂移。
 -- 若实测 yaw 漂移较大，可调整下面的 imu_gravity_time_constant（值越大越"信任"重力方向、
 -- 越平滑，默认 10）。

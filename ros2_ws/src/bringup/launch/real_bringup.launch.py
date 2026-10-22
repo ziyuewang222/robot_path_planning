@@ -90,7 +90,32 @@ def _setup(context):
     )
     actions.append(driver)
 
-    # ------------------------------------------------------------------ 2) 建图（Cartographer）
+    # ------------------------------------------------------------------ 2) 无回波预处理 + 建图（Cartographer）
+    # 真机 LD14 驱动若用 inf/0 表示“量程内无回波”，Cartographer 会直接丢弃这些射线，
+    # 导致地图上残留近身未知楔形。预处理节点把它们改写成 sentinel（> max_range），
+    # 再由 Cartographer 的 missing_data_ray_length 在 7m 处写成 free。
+    use_scan_filter = _as_bool(cfg("use_scan_no_return_filter"))
+    scan_for_slam = cfg("slam_scan_topic") if use_scan_filter else cfg("scan_topic")
+
+    scan_filter = Node(
+        package="nav_slam",
+        executable="scan_no_return_filter",
+        name="scan_no_return_filter",
+        output="screen",
+        parameters=[
+            {
+                "use_sim_time": False,
+                "input_topic": cfg("scan_topic"),
+                "output_topic": cfg("slam_scan_topic"),
+                "slam_max_range": cfg("slam_max_range"),
+                "missing_range": cfg("missing_data_range"),
+                "sentinel_range": cfg("sentinel_range"),
+            }
+        ],
+        condition=IfCondition(LaunchConfiguration("use_scan_no_return_filter")),
+    )
+    actions.append(scan_filter)
+
     cartographer = Node(
         package="cartographer_ros",
         executable="cartographer_node",
@@ -102,7 +127,7 @@ def _setup(context):
             "-configuration_basename", LaunchConfiguration("mapping_config"),
         ],
         remappings=[
-            ("scan", cfg("scan_topic")),
+            ("scan", scan_for_slam),
             ("imu", cfg("imu_topic")),
             ("odom", cfg("odom_topic")),
         ],
@@ -309,7 +334,27 @@ def generate_launch_description():
             description="厂商驱动 launch 文件名（start_driver=true 时必填）",
         ),
         # ---------- 话题 ----------
-        DeclareLaunchArgument("scan_topic", default_value="scan", description="雷达 LaserScan 话题"),
+        DeclareLaunchArgument("scan_topic", default_value="scan", description="雷达 LaserScan 话题（原始，供避障/诊断）"),
+        DeclareLaunchArgument(
+            "use_scan_no_return_filter", default_value="true",
+            description="true 时把 /scan 的 inf/0/超量程改写为 Cartographer 可用的 missing-data 点",
+        ),
+        DeclareLaunchArgument(
+            "slam_scan_topic", default_value="scan_for_slam",
+            description="无回波预处理后的 LaserScan 话题（仅 Cartographer 使用）",
+        ),
+        DeclareLaunchArgument(
+            "slam_max_range", default_value="8.0",
+            description="SLAM 有效量程（m），必须与 cartographer_real*.lua 的 max_range 一致",
+        ),
+        DeclareLaunchArgument(
+            "missing_data_range", default_value="7.0",
+            description="无回波方向清空半径（m），必须与 lua 的 missing_data_ray_length 一致",
+        ),
+        DeclareLaunchArgument(
+            "sentinel_range", default_value="8.5",
+            description="无回波射线改写值（m），必须 > slam_max_range",
+        ),
         DeclareLaunchArgument("imu_topic", default_value="imu", description="IMU 话题"),
         DeclareLaunchArgument("odom_topic", default_value="odom", description="底盘里程计话题"),
         DeclareLaunchArgument("map_topic", default_value="map", description="栅格地图话题"),

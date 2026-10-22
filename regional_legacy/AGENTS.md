@@ -1087,10 +1087,11 @@ use_odometry = false          -- 先关；里程计实测可信后再开
 use_imu_data = true
 TRAJECTORY_BUILDER_2D.min_range = 0.15
 TRAJECTORY_BUILDER_2D.max_range = 8.0
-TRAJECTORY_BUILDER_2D.missing_data_ray_length = 8.0
+TRAJECTORY_BUILDER_2D.missing_data_ray_length = 7.0  -- 2026-10-22 决策，见附十八
 ```
 
 > 注意：Foxy 与 Humble 都支持上述键；Humble 的 occupancy grid 可执行名是 `cartographer_occupancy_grid_node`，Foxy 是 `occupancy_grid_node`。真机 `use_sim_time=false`。
+> 无回波方向按 7 m 空地处理，必须配合 `nav_slam/scan_no_return_filter`；详见附十八。
 
 ### 5.4 启动件选择（后续执行时）
 
@@ -1436,4 +1437,89 @@ arc = 从 T1 绕 C 到 T2，扫角 phi，kappa = sign(phi)/R
 - **阿克曼可用率 37.59%**：剩余失败以折点倒角、起步对齐为主。要再提升，方向是"失败时直接换一个前方开阔的前沿"（已做连续失败拉黑），以及给倒角加"允许局部绕行"。
 - **`3d.world` 的 `<state>` 会把 `Untitled222` 整体平移 (+3.901, +1.153)**：门洞真实位置是 `x∈[7.7557, 8.6557], y=-8.515`，不是源码里的 `x≈3.85, y≈-9.67`。查场景坐标时**必须叠加 `<state>` 偏移**。
 - 真机侧仍需：`min_turn_radius_m` 用固件值 0.35、`inflation_radius_cells=3` 是否够安全需按实测车宽复核、`a_lat_max=0.6` 需按真实抓地力标定。
+
+# 附十八、无回波方向按 7 m 空地处理（2026-10-22）
+
+## 0. 结论速览
+
+- **现象**：地图上从机器人向外呈星形白色空地，白色楔形之间的灰色 `-1` 未知一直贴到车身边；前沿探索把这些近身未知当成目标，选点很差。
+- **根因**：Gazebo ray sensor 与部分真机 LD14 驱动在“量程内没有物体”时发布 `inf`（或 `0`）；Cartographer 的 `LaserScanToPointCloudWithIntensities` 只保留 `range_min <= r <= range_max` 的有限值，`inf` 被直接丢弃。`TRAJECTORY_BUILDER_2D.missing_data_ray_length` 只对“距离 > max_range 的有限点”生效，因此这些方向不会写入任何 free/miss 栅格。
+- **决策**：新增 `nav_slam/scan_no_return_filter`，把 `inf / NaN / r<=0 / r>=8.0m` 改写为 `sentinel=8.5m`（> max_range=8.0），并抬高消息的 `range_max`，让 Cartographer 把它们投影到 `missing_data_ray_length=7.0m` 并写成 free。
+- **实测**：原始 `/scan` 720 条中 195 条有限、525 条 inf；滤波后 `/scan_for_slam` 720 条全部有限。地图径向采样：1~6 m 全部 72/72 方向为 free；6.5 m 为 63 free / 6 unknown / 3 occ（障碍）；7.0 m 为 55 free / 17 unknown；7.5 m 为 7 free / 41 unknown。修复前 unknown=59152、free=18165；修复后（不同帧，地图面积略增）unknown=20582、free=61936。
+- **关键边界**：原始 `/scan` 不变，`path_follower` 继续用原始 scan 避障；只有 Cartographer 订阅滤波后的 `/scan_for_slam`。仿真雷达量程仍保持 0.15~8.0 m，**没有**改 URDF 量程。
+
+## 1. 为什么选 7.0 m
+
+| 依据 | 说明 |
+|---|---|
+| 雷达量程 | LD14P 仿真/真机有效量程 0.15~8.0 m；7.0 比 8.0 小 1 m，留出量程边缘噪声余量 |
+| 房间尺寸 | 内净空 28×20 m，最近外墙距原点 10 m；7 m 清空不会穿墙 |
+| 障碍分布 | 4 根方柱 @ (±7,±5)、2 个台子 @ (0,±7)，真实回波在 6.4~7.5 m；真实回波仍按原值保留 |
+| 真机对齐 | 真机 `cartographer_real.lua` / `cartographer_real_noimu.lua` 同步改为 `missing_data_ray_length=7.0` |
+| 目标 | 车身边上不再出现 `-1`；前沿至少退到 7 m 附近，而不是贴着车 |
+
+> 若以后要改清空距离，必须保持 `0 < missing_data_ray_length < max_range < sentinel_range`，并同步 `gmapping.launch.py` / `real_bringup.launch.py` 的 `missing_range`（该参数仅用于启动日志与一致性校验，真正生效的是 lua）。
+
+## 2. 数据流与参数
+
+```text
+/scan（原始，含 inf/0） ──► scan_no_return_filter ──► /scan_for_slam（全 finite）
+                                                          │
+                                                          ▼
+                                              cartographer_node（scan 重映射）
+                                                          │
+                                    max_range=8.0 → >8.0 视为 missing
+                                    missing_data_ray_length=7.0 → 在 7m 写 free
+```
+
+| 位置 | 参数 | 值 | 约束/说明 |
+|---|---|---|---|
+| URDF `model.urdf` | sensor `<range><max>` | 8.0 | 保持不变，对齐真机 LD14P 物理有效量程 |
+| `scan_no_return_filter` | `slam_max_range` | 8.0 | 必须与 lua `max_range` 一致 |
+| `scan_no_return_filter` | `missing_range` | 7.0 | 仅日志/校验；必须与 lua 一致 |
+| `scan_no_return_filter` | `sentinel_range` | 8.5 | 必须 > `slam_max_range`；输出 `range_max=max(原值, 8.501)` |
+| `cartographer.lua` | `max_range` | 8.0 | 超过 8.0 的有限点转为 missing |
+| `cartographer.lua` | `missing_data_ray_length` | 7.0 | `0 < 7.0 < 8.0 < 8.5` |
+| `cartographer_real*.lua` | 同上 | 8.0 / 7.0 | 与仿真同一口径 |
+
+## 3. 接线位置
+
+- **仿真**：`ros2_ws/src/nav_slam/launch/gmapping.launch.py` 启动 `scan_no_return_filter`，输入 `/scan`、输出 `/scan_for_slam`；`cartographer_node` 的 `scan` 重映射到 `/scan_for_slam`。`exploration_bringup.launch.py` / `exploration_demo.launch.py` 通过 include 自动生效。
+- **真机**：`ros2_ws/src/bringup/launch/real_bringup.launch.py` 新增 `use_scan_no_return_filter`（默认 `true`）、`slam_scan_topic`、`slam_max_range`、`missing_data_range`、`sentinel_range`；滤波节点输入 `scan_topic`，Cartographer 的 `scan` 重映射到 `slam_scan_topic`。`use_scan_no_return_filter:=false` 时回退到原始 scan。
+- **节点/依赖**：`ros2_ws/src/nav_slam/nav_slam/scan_no_return_filter.py`；`setup.py` 增加 `scan_no_return_filter` 入口；`package.xml` 增加 `sensor_msgs` 依赖。
+- **构建**：`colcon build --symlink-install --packages-select nav_slam`。
+
+## 4. 复现与验证
+
+```bash
+# 1) 起仿真（无窗口，验证建图逻辑）
+bash /home/wzy/robot_path_planning/ros2_ws/run_sim.sh headless:=true viz:=false
+
+# 2) 另开终端看原始/滤波后的 scan
+ros2 topic echo /scan --no-arr          # 720 条，range_max=8.0，含 inf
+ros2 topic echo /scan_for_slam --no-arr # 720 条全部有限，range_max≈8.501
+
+# 3) 看地图：近身 7m 内不应再有 -1 楔形
+```
+
+本轮实测（静止起点，Gazebo headless + gmapping，无探索/控制）：
+
+```text
+/scan:          n=720 finite=195 nonfinite=525 range_max=8.000
+/scan_for_slam: n=720 finite=720 nonfinite=0   range_max=8.501
+map: 292x284 res=0.050 unknown=20582 free=61936 occ=410
+径向 free/unknown/occ（72 个方向）:
+  r=1.0~6.0m : free=72 unknown=0 occ=0
+  r=6.5m     : free=63 unknown=6  occ=3
+  r=7.0m     : free=55 unknown=17 occ=0
+  r=7.5m     : free=7  unknown=41 occ=0
+```
+
+## 5. 注意事项 / 已知限制
+
+1. **Gazebo 3D 蓝色扫描面的深色楔形不会消失**：那是“无回波射线”的可视化（Gazebo 只画有回波的线），不代表地图逻辑；以 `/map` 为准。若要 3D 视图也好看，可另改传感器可视化的显示方式，但与建图无关。
+2. **滤波后的 `range_max≈8.501` 是 SLAM 专用 sentinel**，不代表传感器真实量程；避障/诊断节点应使用原始 `/scan`。
+3. **恰好 8.0 m 的真实物体**会被当作无回波（清 7 m），这是量程边界的取舍；需要保留时可把 `slam_max_range` 调到 8.01 或调整 sentinel，但要同步 lua。
+4. **真机驱动兼容性**：`inf`、`NaN`、`0`、`>=8.0 m` 四种“无回波”写法都已覆盖；若驱动把无回波写成其他特殊值（如负值），需要在本节点补一条判断。
+5. **Foxy / Humble**：节点只用 `rclpy` + `sensor_msgs`，两版通用；Humble 的 occupancy grid 可执行名差异仍由 `real_bringup.launch.py` 的 `occupancy_grid_executable` 参数处理。
 

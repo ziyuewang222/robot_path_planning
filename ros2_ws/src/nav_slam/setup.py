@@ -26,6 +26,7 @@ setup(
             'map_pub = nav_slam.map_pub:main',
             'odom_map_tf = nav_slam.odom_map_tf:main',
             'points_pub_map = nav_slam.points_pub_map:main',
+            'scan_no_return_filter = nav_slam.scan_no_return_filter:main',
         ],
     },
 )

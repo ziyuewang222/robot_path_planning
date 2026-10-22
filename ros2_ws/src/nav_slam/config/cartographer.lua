@@ -43,11 +43,16 @@ MAP_BUILDER.use_trajectory_builder_2d = true
 -- 以下三点对齐真机 LD14 0.15~8.0m：
 -- min_range 取 0.15（过滤雷达近距盲区/自车遮挡），
 -- max_range 取 8.0（真机物理有效量程，超出的读数不参与匹配），
--- missing_data_ray_length 取 4.0（小于 max_range 的一半，符合 Cartographer 官方建议，
--- 用于把"该有回波却无回波"的方向标记为自由空间）。
+-- missing_data_ray_length 取 7.0（2026-10-22 决策：无回波方向按 7m 内空地处理）。
+--   1) 必须小于 max_range=8.0，留 1m 余量，避免把量程边缘噪声当成可靠空地；
+--   2) 房间内净空 28x20m，最近外墙距原点 10m，7m 清空不会穿墙；
+--   3) 无回波射线由 nav_slam/scan_no_return_filter 先改写成 sentinel=8.5m
+--      （> max_range），Cartographer 才会把它投影到 7m 并写成 free 栅格。
+--      若直接把 inf 送进来，Cartographer 的 LaserScan 转换会丢弃 inf，
+--      本参数不会生效，地图会残留灰色未知楔形。
 TRAJECTORY_BUILDER_2D.min_range = 0.15
 TRAJECTORY_BUILDER_2D.max_range = 8.
-TRAJECTORY_BUILDER_2D.missing_data_ray_length = 4.
+TRAJECTORY_BUILDER_2D.missing_data_ray_length = 7.0
 -- 打开 IMU：IMU 主要提供 yaw 约束与重力对齐，抑制纯激光匹配 + 常速外推带来的位姿漂移。
 -- 若实测 yaw 漂移较大，可调整下面的 imu_gravity_time_constant（值越大越"信任"重力方向、越平滑，默认 10）。
 TRAJECTORY_BUILDER_2D.use_imu_data = true

@@ -49,10 +49,12 @@ options = {
 
 MAP_BUILDER.use_trajectory_builder_2d = true
 
--- 真机雷达 LD14P：有效量程 0.15 ~ 8.0 m（仿真为 0.12 ~ 12.0）。
+-- 真机雷达 LD14P：有效量程 0.15 ~ 8.0 m。
+-- 无回波方向按 7.0 m 空地处理（2026-10-22 决策，与仿真 cartographer.lua 一致）；
+-- 必须配合 nav_slam/scan_no_return_filter 使用（把 inf/0/超量程改写为 sentinel 8.5 m）。
 TRAJECTORY_BUILDER_2D.min_range = 0.15
 TRAJECTORY_BUILDER_2D.max_range = 8.0
-TRAJECTORY_BUILDER_2D.missing_data_ray_length = 8.0
+TRAJECTORY_BUILDER_2D.missing_data_ray_length = 7.0
 -- 无 IMU：关闭 IMU 数据。
 TRAJECTORY_BUILDER_2D.use_imu_data = false
 TRAJECTORY_BUILDER_2D.imu_gravity_time_constant = 10.

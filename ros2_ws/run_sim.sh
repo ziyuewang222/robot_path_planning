@@ -35,6 +35,7 @@ PATTERNS=(
   "gzclient"
   "cartographer_node"
   "occupancy_grid_node"
+  "scan_no_return_filter"
   "frontier_explorer_node"
   "path_follower_node"
   "exploration_viz"
