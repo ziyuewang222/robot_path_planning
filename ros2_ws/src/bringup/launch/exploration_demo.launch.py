@@ -15,7 +15,7 @@ bringup/exploration_viz，从而做到**一条命令同时看到**：
     refresh_hz 由 launch argument 决定。
 
 参数：
-  - algorithm_root   | 环境变量 REGIONAL_LEGACY_ROOT，为空回落 /home/wzy/robot_path_planning/regional_legacy
+  - algorithm_root   | 环境变量 REGIONAL_LEGACY_ROOT；为空则用 regional_explorer 包内自带的 legacy 算法副本
   - map_save_prefix  | os.path.join(os.getcwd(), "maps", "exploration_map")
   - headless         | "false"（默认开 GUI，才能看到 Gazebo 里的小车；无显示时用 headless:=true）
   - viz              | "true"（是否启动 matplotlib 可视化节点）
@@ -49,10 +49,9 @@ def generate_launch_description():
     )
 
     # ---- 默认值（对齐 exploration_bringup.launch.py，均可被 launch argument 覆盖）----
-    # algorithm_root：优先环境变量 REGIONAL_LEGACY_ROOT，为空则回落到固定路径。
-    default_algorithm_root = os.environ.get(
-        "REGIONAL_LEGACY_ROOT"
-    ) or "/home/wzy/robot_path_planning/regional_legacy"
+    # algorithm_root：留空 = 用 regional_explorer 包内自带的 legacy 算法副本；
+    # 也可用 REGIONAL_LEGACY_ROOT 或 algorithm_root:=... 指向外部 regional_legacy。
+    default_algorithm_root = os.environ.get("REGIONAL_LEGACY_ROOT", "")
     # map_save_prefix：探索完成时写图的绝对路径前缀（基于当前工作目录）。
     default_map_save_prefix = os.path.join(os.getcwd(), "maps", "exploration_map")
 

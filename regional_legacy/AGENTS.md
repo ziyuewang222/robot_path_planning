@@ -1856,3 +1856,64 @@ ros2 launch bringup complex_building_explore.launch.py world:=3d_enclosed.world
 - 建筑 `<state>` 会把 Untitled222 整体平移 (+3.901,+1.153)，门洞真实位置
   x∈[7.7557,8.6557]、y=-8.515（见附十七），与围墙无关。
 
+# 附二十三、ros2_ws 自包含封装（2026-10-22）
+
+## 0. 结论速览
+
+- **目标**：只拷贝 `ros2_ws` 一个文件夹就能跑仿真 / 上真机，不再依赖仓库同级的
+  `regional_legacy`。
+- **做法**：把探索器真正用到的算法依赖闭包复制进 ROS 包内：
+  ```
+  ros2_ws/src/regional_explorer/regional_explorer/legacy/
+  ├── __init__.py
+  ├── core/{__init__.py, a_star.py, ackermann_traj.py, obstacle_distance.py}
+  └── real_work/{__init__.py, light_qifa.py}
+  ```
+  这 4 个 .py 是从 `regional_legacy` 原样拷贝的副本（共约 136 KB），没有改逻辑。
+- **选择逻辑**（`_load_algorithm_modules` / `frontier_explorer_node`）：
+  1. 参数 `algorithm_root` 非空 → 用它（绝对路径）；
+  2. 否则环境变量 `REGIONAL_LEGACY_ROOT` 非空 → 用它；
+  3. 否则用包内 `regional_explorer/legacy`（默认，随 ros2_ws 一起走）。
+- **launch 默认值**：`exploration_bringup` / `exploration_demo` / `real_bringup` /
+  `frontier_explorer.launch.py` 的 `algorithm_root` 默认全部改为 `""`（= 用包内副本）。
+  需要复用外部 `regional_legacy` 时：`algorithm_root:=/path/to/regional_legacy`
+  或 `export REGIONAL_LEGACY_ROOT=/path/to/regional_legacy`。
+- **setup.py**：`packages=[package_name]` → `find_packages(exclude=["test"])`，
+  保证**非 symlink 安装**时 `legacy` 子包也被装进 site-packages。
+- **run_sim.sh**：`WS` 从 `$(dirname $BASH_SOURCE)` 推导，不再写死
+  `/home/wzy/robot_path_planning/ros2_ws`，整个目录拷到别处也能直接跑。
+
+## 1. 验证（把 regional_legacy 临时改名后跑通）
+
+```text
+$ mv regional_legacy .rl_hidden_verify
+$ ros2 launch bringup complex_building_explore.launch.py world:=3d_enclosed.world headless:=true viz:=false
+... frontier_explorer 启动 | algorithm_root=.../ros2_ws/build/regional_explorer/regional_explorer/legacy | ...
+... 已发布阿克曼可行轨迹 × 4   （无 ERROR / Traceback）
+$ mv .rl_hidden_verify regional_legacy
+```
+
+房间场景（`exploration_demo.launch.py`）同样验证通过：`algorithm_root=.../legacy`，
+55 s 内发布 5 条阿克曼轨迹，无报错。
+
+## 2. 迁移到真机时的注意事项
+
+1. **必须在目标机重新 `colcon build`**：`install/` 的 `setup.bash`、Python
+   egg-link 里写的是构建时的**绝对路径**，换机器/换目录直接拷 `install/` 不能用。
+   ```bash
+   cd <拷贝后的>/ros2_ws && colcon build --symlink-install
+   ```
+   若目标机是 Humble，`cartographer_ros` 的 occupancy grid 可执行名不同，用
+   `real_bringup.launch.py` 的 `occupancy_grid_executable:=cartographer_occupancy_grid_node`。
+2. **`algorithm_root` 保持默认（空）** 即用包内副本；若真机上另有一份调好的
+   `regional_legacy`，再显式传 `algorithm_root:=`。
+3. **两份代码会漂移**：包内 `legacy/` 是副本，修改 `regional_legacy/core/*.py`
+   后必须同步复制到 `ros2_ws/src/regional_explorer/regional_explorer/legacy/`，
+   否则仿真与离线调参行为不一致。同步命令：
+   ```bash
+   cp regional_legacy/core/{a_star.py,ackermann_traj.py,obstacle_distance.py} \
+      ros2_ws/src/regional_explorer/regional_explorer/legacy/core/
+   cp regional_legacy/real_work/light_qifa.py \
+      ros2_ws/src/regional_explorer/regional_explorer/legacy/real_work/
+   ```
+

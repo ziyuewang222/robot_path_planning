@@ -8,21 +8,9 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    # 默认指向本仓库 ros2_ws 同级的 regional_legacy 目录，可用 REGIONAL_LEGACY_ROOT 覆盖。
-    default_algorithm_root = os.environ.get(
-        "REGIONAL_LEGACY_ROOT",
-        os.path.abspath(
-            os.path.join(
-                get_package_share_directory("regional_explorer"),
-                "..",
-                "..",
-                "..",
-                "..",
-                "..",
-                "regional_legacy",
-            )
-        ),
-    )
+    # algorithm_root 留空 = 使用包内自带的 legacy 算法副本（ros2_ws 自包含）；
+    # 设置 REGIONAL_LEGACY_ROOT 或传 algorithm_root:=... 可改用外部 regional_legacy。
+    default_algorithm_root = os.environ.get("REGIONAL_LEGACY_ROOT", "")
 
     return LaunchDescription(
         [

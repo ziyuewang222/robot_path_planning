@@ -234,6 +234,9 @@ def _setup(context):
                 "replan_rate_hz": cfg("replan_rate_hz"),
                 "obstacle_safe_distance": cfg("obstacle_safe_distance"),
                 "inflation_radius_cells": cfg("inflation_radius_cells"),
+                "clearance_target_cells": cfg("clearance_target_cells"),
+                "clearance_weight": cfg("clearance_weight"),
+                "candidate_retry_count": cfg("candidate_retry_count"),
                 "min_frontier_distance": cfg("min_frontier_distance"),
                 "map_save_prefix": cfg("map_save_prefix"),
                 "no_frontier_confirm_count": cfg("no_frontier_confirm_count"),
@@ -244,6 +247,7 @@ def _setup(context):
                 "stall_move_eps": cfg("stall_move_eps"),
                 "target_blacklist_sec": cfg("target_blacklist_sec"),
                 "target_blacklist_radius": cfg("target_blacklist_radius"),
+                "target_lock_until_reached": cfg("target_lock_until_reached"),
                 "target_hysteresis_sec": cfg("target_hysteresis_sec"),
             }
         ],
@@ -314,9 +318,10 @@ def _setup(context):
 
 def generate_launch_description():
     # ---- 默认值（真机路径必须 os.path.expanduser 展开 ~）----
-    default_algorithm_root = (
-        os.environ.get("REGIONAL_LEGACY_ROOT") or os.path.expanduser("~/regional_legacy")
-    )
+    # algorithm_root 留空 = 使用 regional_explorer 包内自带的 legacy 算法副本：
+    # 真机上只拷 ros2_ws 即可运行，不需要额外拷贝 regional_legacy。
+    # 需要与离线调参共用同一份代码时，设 REGIONAL_LEGACY_ROOT 或传 algorithm_root:=...
+    default_algorithm_root = os.environ.get("REGIONAL_LEGACY_ROOT", "")
     default_map_save_prefix = os.path.expanduser("~/.ros/maps/exploration_map")
 
     declared_arguments = [
@@ -404,6 +409,9 @@ def generate_launch_description():
         DeclareLaunchArgument("replan_rate_hz", default_value="1.0", description="探索器决策调度频率（Hz）"),
         DeclareLaunchArgument("obstacle_safe_distance", default_value="5.0", description="车体安全包络半径（格）"),
         DeclareLaunchArgument("inflation_radius_cells", default_value="5.0", description="A* 障碍硬膨胀半径（格）"),
+        DeclareLaunchArgument("clearance_target_cells", default_value="10.0", description="软性期望净空（格），0 表示关闭"),
+        DeclareLaunchArgument("clearance_weight", default_value="0.05", description="软性净空代价权重（每格）"),
+        DeclareLaunchArgument("candidate_retry_count", default_value="5", description="初始选点 A* 失败时最多尝试的候选数"),
         DeclareLaunchArgument("min_frontier_distance", default_value="10.0", description="前沿到机器人的最小可达距离（格）"),
         DeclareLaunchArgument("no_frontier_confirm_count", default_value="10", description="连续多少轮无目标才判定完成"),
         DeclareLaunchArgument("max_exploration_time_sec", default_value="1800.0", description="探索超时（s）"),
@@ -419,7 +427,11 @@ def generate_launch_description():
         DeclareLaunchArgument("stall_move_eps", default_value="0.30", description="目标推进位移阈值（m）"),
         DeclareLaunchArgument("target_blacklist_sec", default_value="180.0", description="临时黑名单时长（s）"),
         DeclareLaunchArgument("target_blacklist_radius", default_value="1.5", description="黑名单半径（m）"),
-        DeclareLaunchArgument("target_hysteresis_sec", default_value="10.0", description="目标迟滞时长（s）"),
+        DeclareLaunchArgument(
+            "target_lock_until_reached", default_value="True",
+            description="目标锁定：发布前沿后一直朝它走，到达才允许选下一个（行进途中不换目标）",
+        ),
+        DeclareLaunchArgument("target_hysteresis_sec", default_value="10.0", description="目标迟滞时长（s），仅锁定关闭时生效"),
         # ---------- 可视化 ----------
         DeclareLaunchArgument("viz", default_value="false", description="是否启动 matplotlib 可视化节点"),
         DeclareLaunchArgument("refresh_hz", default_value="5.0", description="可视化重绘频率（Hz）"),

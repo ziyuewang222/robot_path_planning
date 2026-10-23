@@ -1,11 +1,14 @@
-from setuptools import setup
+from setuptools import find_packages, setup
 
 package_name = "regional_explorer"
 
 setup(
     name=package_name,
     version="0.1.0",
-    packages=[package_name],
+    # 用 find_packages 而不是写死单包：这样 regional_explorer/legacy（随包携带的
+    # 算法副本，含 core/ 与 real_work/）在**非 symlink 安装**时也会被装进
+    # site-packages，保证只拷 ros2_ws 就能跑仿真/真机。
+    packages=find_packages(exclude=["test"]),
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),

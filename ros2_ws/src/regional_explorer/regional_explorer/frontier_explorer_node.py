@@ -12,11 +12,13 @@ from __future__ import annotations
   - std_msgs/msg/Bool（默认话题 exploration_done）：探索完成标志（latched/TRANSIENT_LOCAL，
     让后加入的订阅者也能收到 True）
 
-算法本体复用 regional_legacy/real_work/light_qifa.py 与 regional_legacy/core/a_star.py，
-通过参数 algorithm_root 指定 regional_legacy 目录（也可用环境变量 REGIONAL_LEGACY_ROOT）。
+算法本体随包携带在 regional_explorer/legacy/（core/a_star.py、core/ackermann_traj.py、
+core/obstacle_distance.py、real_work/light_qifa.py 的副本），因此**只拷 ros2_ws 就能运行**，
+不再依赖仓库同级的 regional_legacy 目录。若要复用外部 regional_legacy（例如离线调参），
+用参数 algorithm_root:=/path/to/regional_legacy 或环境变量 REGIONAL_LEGACY_ROOT 覆盖。
 
 参数（名称 | 默认值 | 含义）：
-  - algorithm_root            | ""                          | regional_legacy 目录（或环境变量 REGIONAL_LEGACY_ROOT）
+  - algorithm_root            | ""（= 包内 legacy）          | 算法目录；空则表示用随包携带的副本
   - map_topic                 | "map"                       | 订阅的栅格地图话题
   - goal_topic                | "exploration_goal"          | 前沿目标点发布话题
   - path_topic                | "exploration_path"          | 初步路径发布话题
@@ -30,8 +32,9 @@ from __future__ import annotations
   - max_exploration_time_sec  | 1800.0                      | 从节点启动算起（单调钟），超过该秒数即判定完成
   - max_goal_count            | 200                         | 累计发布的不同目标数（世界坐标变化、且相对上一目标位移 ≥ goal_count_min_move_m 才计数）达到该值即判定完成
   - goal_count_min_move_m     | 1.0                         | 目标计数的最小有效位移（m），过滤前沿的小幅挪动
-  - target_hysteresis_sec     | 10.0                        | 目标迟滞时长（s）：未超过该时长且当前目标仍可达/仍是前沿时沿用，不重新选点
-  - target_keep_verify        | True                        | 沿用当前目标前是否校验"仍是前沿候选"
+  - target_lock_until_reached | True                        | 目标锁定：发布前沿后一直朝它走，到达（< goal_tolerance）才允许选下一个；行进途中不换目标（仅 A* 完全不可达 / 卡死检测两个安全逃生口）
+  - target_hysteresis_sec     | 10.0                        | 目标迟滞时长（s）：仅在 target_lock_until_reached=False 时生效
+  - target_keep_verify        | True                        | 沿用当前目标前是否校验"仍是前沿候选"；锁定模式下不校验（车接近后目标格变自由格属正常）
   - goal_tolerance            | 0.35                        | 到达判定半径（m）：机器人到当前目标小于该值即清空当前目标，允许换目标
   - stall_detect_sec          | 45.0                        | 机器人在该时长内位移小于阈值即视为"目标推进不了"
   - stall_move_eps            | 0.30                        | 目标推进检测的位移阈值（m）
@@ -44,6 +47,9 @@ from __future__ import annotations
   - obstacle_safe_distance    | 5.0                         | 障碍安全包络半径（栅格，真机基准 0.25 m = 5 格）
   - min_frontier_distance    | 10.0                        | 前沿与机器人的直线（欧氏）栅格距离下限，避免选中贴在车身上的退化前沿
   - inflation_radius_cells    | 5.0                         | 前向安全的障碍硬膨胀半径（格），真机安全包络 0.25m = 5 格；同时作为阿克曼轨迹的 safety_cells（不新增 traj_safety_cells）
+  - clearance_target_cells    | 10.0                        | 软性期望净空（格）：A* 对小于该距离的格子叠加二次代价，让路径走开阔侧；同时作为轨迹捷径的净空门槛。0=关闭
+  - clearance_weight          | 0.05                        | 软性净空代价权重（每格）；贴墙 30 格额外代价约 37，对应 10~15% 的绕行预算
+  - candidate_retry_count     | 5                           | 初始选点 A* 失败时最多尝试的候选数（每个候选含标准膨胀 + 降级膨胀两次 A*），防止"偶发选中墙角不可达前沿 -> 连续无目标 -> 伪完成"
   - enable_ackermann_traj     | True                        | 是否把 A* 折线转成阿克曼可行轨迹再发布；False 时退回原始 A* 折线（A/B 对比用）
   - wheelbase_m               | 0.144                       | 车辆轴距（m），传给 AckermannTrajConfig
   - max_steer_rad             | 0.489                       | 前轮最大转角（rad），传给 AckermannTrajConfig
@@ -78,8 +84,11 @@ from __future__ import annotations
     2) 候选只是被临时黑名单全部排除：用不带 exclude_mask 的参数再探测一次，若能选出
        目标则说明黑名单暂时封住了全部候选，此时**清空黑名单**（否则会永久空转），
        本轮跳过（探测结果不发布，避免误用被拉黑目标）。
-  - 目标迟滞：当前目标发布后 target_hysteresis_sec 内，若该目标仍是前沿候选且 A* 可达，
-    则直接重新发布同一目标/路径，不重新选点、不累加 _goal_count，避免每隔几秒换目标。
+  - 目标锁定（默认开启）：当前目标发布后一直沿用并重发同一目标/路径，不重新选点、
+    不累加 _goal_count，**直到到达**（距离 < goal_tolerance）才允许选下一个前沿。
+    行进途中路径被新观测障碍挡住时，只作废旧路径并用同一目标重新规划，不换目标。
+    仅保留两个安全逃生口：A* 在膨胀与零膨胀下均不可达、卡死检测（stall_detect_sec）。
+    关闭 target_lock_until_reached 后回到旧的"迟滞"行为（target_hysteresis_sec 内沿用）。
   - 当前目标的"世界坐标"与"最近发布目标世界坐标"合并为同一个字段
     _current_target_world（附发布时间 _current_target_time），不再保存栅格行列，避免
     /map origin 漂移导致黑名单错位、_goal_count 虚增。
@@ -199,8 +208,20 @@ def _yaw_from_quaternion_optional(x: float, y: float, z: float, w: float) -> Opt
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
+def _bundled_algorithm_root() -> str:
+    """随包携带的算法目录（ros2_ws 自包含，拷贝 ros2_ws 即可运行）。
+
+    2026-10-22：把 regional_legacy 依赖闭包（core/a_star.py、core/ackermann_traj.py、
+    core/obstacle_distance.py、real_work/light_qifa.py）复制到
+    ``regional_explorer/legacy/``，使 ros2_ws 单独拷到真机也能直接跑，不再依赖
+    仓库同级的 regional_legacy 目录。仍然支持 algorithm_root 参数 / REGIONAL_LEGACY_ROOT
+    环境变量指向外部 regional_legacy（优先于内置副本，便于离线调参共用同一份代码）。
+    """
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "legacy")
+
+
 def _load_algorithm_modules(algorithm_root: str):
-    """从 regional_legacy 目录动态导入算法模块，保证与离线调参使用同一份代码。
+    """从算法目录动态导入算法模块（默认用随包携带的 legacy 副本）。
 
     返回值新增 ``AckermannTrajConfig`` / ``plan_ackermann_trajectory`` /
     ``distance_to_obstacle``，供探索器把 A* 折线转成阿克曼可行轨迹。
@@ -215,7 +236,7 @@ def _load_algorithm_modules(algorithm_root: str):
     if not algorithm_root:
         raise RuntimeError(
             "未指定 algorithm_root，请设置 ROS 参数 algorithm_root 或环境变量 "
-            "REGIONAL_LEGACY_ROOT 指向 regional_legacy 目录"
+            "REGIONAL_LEGACY_ROOT 指向算法目录（留空则使用随包携带的 legacy 副本）"
         )
     if not os.path.isdir(algorithm_root):
         raise RuntimeError(f"algorithm_root 目录不存在: {algorithm_root}")
@@ -264,7 +285,10 @@ class FrontierExplorerNode(Node):
     def __init__(self) -> None:
         super().__init__("frontier_explorer")
 
-        self.declare_parameter("algorithm_root", os.environ.get("REGIONAL_LEGACY_ROOT", ""))
+        self.declare_parameter(
+            "algorithm_root",
+            os.environ.get("REGIONAL_LEGACY_ROOT", "") or _bundled_algorithm_root(),
+        )
         self.declare_parameter("map_topic", "map")
         self.declare_parameter("goal_topic", "exploration_goal")
         self.declare_parameter("path_topic", "exploration_path")
@@ -285,8 +309,17 @@ class FrontierExplorerNode(Node):
         self.declare_parameter("map_save_prefix", "maps/exploration_map")
 
         # 目标迟滞：避免每次决策都换目标（实测中位 5.3s 就换一次，160 个目标只到达 2 次）。
+        # target_lock_until_reached=True 时迟滞时长不再起作用（一直沿用，直到到达）。
         self.declare_parameter("target_hysteresis_sec", 10.0)
         self.declare_parameter("target_keep_verify", True)
+        # 目标锁定（2026-10-22 决策）：一旦发布某个前沿目标，就**一直朝它走，直到到达**
+        # （距离 < goal_tolerance）才允许选下一个前沿；行进途中不因迟滞到期、目标不再是
+        # 前沿、或出现更"划算"的前沿而换目标。仅保留三个安全逃生口：
+        #   1) 当前目标在当前地图上 A* 完全不可达（膨胀与零膨胀都失败）；
+        #   2) 卡死检测（stall_detect_sec 内位移 < stall_move_eps，见 _update_stall）；
+        #   3) 该目标被重复选中且历史失败过多（仅在关闭本开关时生效，见 _record_traj_result）。
+        # 路径被新观测障碍挡住时**不换目标**，只用同一个目标重新规划一条新路径。
+        self.declare_parameter("target_lock_until_reached", True)
         # 到达判定半径（m）：机器人到当前目标小于该值即承认"已到达"，清空当前目标。
         self.declare_parameter("goal_tolerance", 0.35)
 
@@ -313,6 +346,21 @@ class FrontierExplorerNode(Node):
         # 前向安全的障碍硬膨胀半径（格）：真机安全包络 0.25m = 5 格；部署侧需显式传值，
         # 因为 A* 库的默认值是 0（不膨胀，供离线/训练/评测链路保持原行为）。
         self.declare_parameter("inflation_radius_cells", 5.0)
+        # ---- 软性期望净空（A+B 方案，2026-10-22）----
+        # 硬膨胀 5 格（0.25 m）只能保证"不贴墙"，掩膜外代价相同，最短路径必然压在
+        # 膨胀边界上；阿克曼倒角（R=0.35 m）会向转角内侧切约 2.9 格，叠加循迹误差后
+        # 实际车壁间隙接近 0，于是反复触发前向刹车/脱困。
+        # 这里给 A* 叠加软性净空代价，并作为轨迹模块的"期望净空"：
+        #   clearance_target = 10 格（0.50 m） = 硬下限 5 + 倒角内切 2.9 + 循迹/余量
+        #   weight = 0.05：贴墙 30 格额外代价约 37，足以让路径多绕 10~15%。
+        self.declare_parameter("clearance_target_cells", 10.0)
+        self.declare_parameter("clearance_weight", 0.05)
+        # ---- 初始选点的"坏候选跳过"（2026-10-22 伪完成防护）----
+        # 前沿定义是"自由格且邻域含未知"，墙角/贴墙前沿天然落在 5 格膨胀口袋内，
+        # 单个 best 候选 A* 失败就直接 bump streak，实测会造成"地图还有大量未知却判
+        # 探索完成"（伪完成）。这里最多尝试 candidate_retry_count 个候选，每个候选
+        # 先用标准膨胀、失败再用降级膨胀重试；全部失败才计入"无目标"。
+        self.declare_parameter("candidate_retry_count", 5)
 
         # ---- 阿克曼轨迹生成参数（复用 inflation_radius_cells 作为 safety_cells）----
         # 关掉 enable_ackermann_traj 时退回原始 A* 折线，便于 A/B 对比。
@@ -333,7 +381,11 @@ class FrontierExplorerNode(Node):
         # 缓存路径前该距离内出现新观测障碍即清空当前目标、立即重规划（跳过目标迟滞）。
         self.declare_parameter("path_block_check_m", 1.0)
 
-        algorithm_root = self.get_parameter("algorithm_root").value
+        # algorithm_root 留空（launch 默认传 ""）时使用随包携带的 legacy 副本，
+        # 保证只拷 ros2_ws 也能跑；显式传外部 regional_legacy 路径时优先用它。
+        algorithm_root = str(self.get_parameter("algorithm_root").value).strip()
+        if not algorithm_root:
+            algorithm_root = _bundled_algorithm_root()
         (
             config_cls,
             self._decide_frontier,
@@ -359,15 +411,34 @@ class FrontierExplorerNode(Node):
         self._inflation_radius_cells = int(
             self.get_parameter("inflation_radius_cells").value
         )
+        # 起点本体占位圈半径（格）：与阿克曼轨迹模块 _start_clear_cells 同口径
+        # （ceil(safety)+1）。机器人物理上占着这一圈，建图抖动常让该格落在膨胀区里，
+        # 若不清空，A* 一开算就"起点四周全被挡住"。只清起点附近，圈外安全口径不变。
+        # 删除零膨胀回退后，这一步是避免"行进途中因起点格误判而频繁清空目标"的关键。
+        self._start_clear_cells = int(math.ceil(float(self._inflation_radius_cells))) + 1
+        # 软性期望净空（格）与权重：0 表示关闭（回到只做硬膨胀的旧行为）。
+        self._clearance_target_cells = max(
+            float(self.get_parameter("clearance_target_cells").value), 0.0
+        )
+        self._clearance_weight = max(
+            float(self.get_parameter("clearance_weight").value), 0.0
+        )
+        # 初始选点最多尝试的候选数（每个候选含"标准膨胀 + 降级膨胀"两次 A*）。
+        self._candidate_retry_count = max(
+            int(self.get_parameter("candidate_retry_count").value), 1
+        )
         # ---- 修复 1：距离场上限（性能）----
         # 在线调用方只关心 `dist < inflation_radius_cells`、`dist >= obstacle_safe_distance`
         # 以及软代价 clip(1 - d/safe, 0, 1)（d >= safe 时恒 0），因此超出安全距离的值完全等价。
-        # 上限取 max(safe, inflation) + 2 格：保证所有阈值比较都落在未截断区间内。
+        # 上限取 max(safe, inflation, clearance_target) + 2 格：保证所有阈值比较与
+        # 软性净空代价 `(target - d)^2` 都落在未截断区间内（若上限小于 clearance_target，
+        # 超出部分会被截断成同一个值，软代价失效、路径又会贴墙）。
         # 复杂建筑 946×1063 纯 Python chamfer 单轮约 2.43s，上限化向量化后为毫秒级。
         self._distance_field_max_distance = (
             max(
                 float(self._heuristic_config.obstacle_safe_distance),
                 float(self._inflation_radius_cells),
+                self._clearance_target_cells,
             )
             + 2.0
         )
@@ -423,6 +494,10 @@ class FrontierExplorerNode(Node):
         )
         self._target_keep_verify = _as_bool(
             self.get_parameter("target_keep_verify").value
+        )
+        # 目标锁定：True 时目标一直沿用到到达，行进途中不换前沿（详见参数声明处注释）。
+        self._target_lock_until_reached = _as_bool(
+            self.get_parameter("target_lock_until_reached").value
         )
         self._goal_tolerance = float(self.get_parameter("goal_tolerance").value)
         # 目标推进检测参数。
@@ -529,6 +604,7 @@ class FrontierExplorerNode(Node):
             f"min_known={self._min_known_cells} | "
             f"timeout={self._max_exploration_time_sec}s | "
             f"max_goal={self._max_goal_count} | "
+            f"lock_until_reached={self._target_lock_until_reached}/"
             f"hysteresis={self._target_hysteresis_sec}s/verify={self._target_keep_verify}/"
             f"tol={self._goal_tolerance}m | "
             f"stall={self._stall_detect_sec}s/{self._stall_move_eps}m | "
@@ -541,7 +617,8 @@ class FrontierExplorerNode(Node):
             f"tf={self._global_frame}->{self._robot_frame} | "
             f"ackermann={self._enable_ackermann_traj}"
             f"(L={self._wheelbase_m}m/steer {self._max_steer_rad}rad/"
-            f"Rmin={self._min_turn_radius_m}m/safety {self._inflation_radius_cells}格) | "
+            f"Rmin={self._min_turn_radius_m}m/safety {self._inflation_radius_cells}格/"
+            f"clearance {self._clearance_target_cells:g}格×{self._clearance_weight:g}) | "
             f"astar8={self._use_eight_neighbors}/unknown_block="
             f"{self._treat_unknown_as_obstacle} | "
             f"path_block={self._path_block_check_m}m"
@@ -778,49 +855,107 @@ class FrontierExplorerNode(Node):
             return
 
         # A* 栅格路径：保留作为回退路径与"路径受阻检查"的依据（每轮距离场复用）。
-        path_indices = self._planner.plan(
-            explored_map,
-            robot_grid,
-            decision.target,
-            inflation_radius_cells=self._inflation_radius_cells,
-            use_eight_neighbors=self._use_eight_neighbors,
-            treat_unknown_as_obstacle=self._treat_unknown_as_obstacle,
-            distance_field=planner_distance_field,
-        )
-        if path_indices is None:
-            # 区分"因膨胀无路"与"真不可达"：用 inflation_radius_cells=0 重试一次。
-            # 若重试成功 -> 只是膨胀把路/目标格暂时封住（如窄门、目标格贴着安全边界）。
-            # **接受这条零膨胀路径继续发布目标与路径**，不再"只打日志然后 return"：
-            # 否则下一轮仍选中同一前沿、同样失败，目标发布永久停止，8s 后 path_follower
-            # 判 stale 零速，形成死锁。目标位置本身的安全性由 light_qifa 的候选过滤
-            # （dist >= obstacle_safe_distance）保证，且下游有前向刹车与脱困兜底。
-            retry_path = self._planner.plan(
+        # 软性净空代价让路径主动走开阔侧（A+B 方案的 A 部分）。
+        #
+        # 2026-10-22 伪完成防护：单 best 候选不可达就直接 bump streak，会把"地图还有
+        # 大量未知"误判成探索完成（实测 21:54 那轮：车到目标后连续 5 轮选出的墙角前沿
+        # 都不可达 -> 10 轮 -> done）。这里改为：
+        #   1) 先尝试 best 候选，失败再用降级膨胀 max(3, inflation-2) 重试（0.15 m 仍
+        #      大于车半宽 0.10 m，不发 0 格路径，保留删除零膨胀回退的安全意图）；
+        #   2) 仍失败则临时排除该候选，调用 _decide_frontier 选下一个候选，最多尝试
+        #      candidate_retry_count 个；
+        #   3) 全部失败才算"真无目标"，才 bump streak。
+        reduced_inflation = max(self._inflation_radius_cells - 2, 3)
+        path_indices = None
+        candidate_target = decision.target
+        candidate_exclude = exclude_mask
+        tried_candidates = 0
+        used_reduced = False
+        while candidate_target is not None and tried_candidates < self._candidate_retry_count:
+            tried_candidates += 1
+            path_indices = self._planner.plan(
                 explored_map,
                 robot_grid,
-                decision.target,
-                inflation_radius_cells=0,
+                candidate_target,
+                inflation_radius_cells=self._inflation_radius_cells,
                 use_eight_neighbors=self._use_eight_neighbors,
                 treat_unknown_as_obstacle=self._treat_unknown_as_obstacle,
                 distance_field=planner_distance_field,
+                clearance_target_cells=self._clearance_target_cells,
+                clearance_weight=self._clearance_weight,
+                start_clear_cells=self._start_clear_cells,
             )
-            if retry_path is not None:
-                self.get_logger().info(
-                    f"该前沿在膨胀半径 {self._inflation_radius_cells} 格下不可达，"
-                    f"改用零膨胀路径发布（已启用前向刹车与脱困兜底）",
-                    throttle_duration_sec=10.0,
+            if (
+                path_indices is None
+                and reduced_inflation < self._inflation_radius_cells
+            ):
+                path_indices = self._planner.plan(
+                    explored_map,
+                    robot_grid,
+                    candidate_target,
+                    inflation_radius_cells=reduced_inflation,
+                    use_eight_neighbors=self._use_eight_neighbors,
+                    treat_unknown_as_obstacle=self._treat_unknown_as_obstacle,
+                    distance_field=planner_distance_field,
+                    clearance_target_cells=self._clearance_target_cells,
+                    clearance_weight=self._clearance_weight,
+                    start_clear_cells=self._start_clear_cells,
                 )
-                # 用零膨胀路径正常走完后面的成功发布流程（重置 streak、判新目标、
-                # 累加 _goal_count 等），保证目标发布持续推进。
-                path_indices = retry_path
+                used_reduced = path_indices is not None
+            if path_indices is not None:
+                break
+            # 该候选不可达：临时排除后重新选下一个（复用当轮距离场，性能可接受）。
+            self.get_logger().info(
+                f"前沿候选 {tried_candidates}/{self._candidate_retry_count} "
+                f"({candidate_target[0]},{candidate_target[1]}) 在膨胀口径下不可达，"
+                f"换下一个候选",
+                throttle_duration_sec=5.0,
+            )
+            if candidate_exclude is None:
+                candidate_exclude = np.zeros(explored_map.shape, dtype=bool)
             else:
-                # 重试也失败：维持原行为，计入"A* 未能规划"那条 streak（真不可达）。
-                self.get_logger().warn("A* 未能规划到该前沿，本轮跳过")
-                self._bump_no_target(
-                    "连续多轮未产出可达目标，地图已探索完毕", explored_map
-                )
-                return
+                candidate_exclude = candidate_exclude.copy()
+            cw = self._grid_to_world(candidate_target)
+            self._stamp_exclude_circle(
+                candidate_exclude,
+                self._grid_msg.info,
+                float(cw[0]),
+                float(cw[1]),
+                radius_cells=1.0,
+                snap_to_cell=True,
+            )
+            next_decision = self._decide_frontier(
+                explored_map,
+                robot_grid,
+                previous_direction=self._previous_direction,
+                config=self._heuristic_config,
+                exclude_mask=candidate_exclude,
+                distance_to_obstacle=distance_field,
+            )
+            candidate_target = (
+                next_decision.target if next_decision is not None else None
+            )
 
-        goal_world = self._grid_to_world(decision.target)
+        if path_indices is None:
+            # 全部候选（含降级膨胀）都不可达：如实算"本轮没产出可达目标"，
+            # 由 no_frontier_confirm_count / 超时 / 卡死检测负责收敛。
+            self.get_logger().warn(
+                f"连续尝试 {self._candidate_retry_count} 个前沿候选均不可达，"
+                f"本轮不出目标",
+                throttle_duration_sec=5.0,
+            )
+            self._bump_no_target(
+                "连续多轮未产出可达目标，地图已探索完毕", explored_map
+            )
+            return
+
+        goal_world = self._grid_to_world(candidate_target)
+        if used_reduced:
+            self.get_logger().info(
+                f"目标 ({goal_world[0]:.2f}, {goal_world[1]:.2f}) 用降级膨胀 "
+                f"{reduced_inflation} 格规划成功（原 {self._inflation_radius_cells} 格）",
+                throttle_duration_sec=10.0,
+            )
         # 用机器人->目标方向作为朝向（robot_world 为本帧 TF 世界坐标，避免再按旧 origin 换算）。
         yaw = math.atan2(goal_world[1] - robot_world[1], goal_world[0] - robot_world[0])
 
@@ -895,20 +1030,29 @@ class FrontierExplorerNode(Node):
         planner_distance_field: np.ndarray,
         traj_distance_field: np.ndarray,
     ) -> bool:
-        """目标迟滞：在有效期内沿用当前目标，返回 True 表示本轮已重发并应直接 return。
+        """沿用当前目标，返回 True 表示本轮已重发并应直接 return。
 
-        判定顺序：
-          1) 已有当前目标，且 now - _current_target_time < target_hysteresis_sec；
-          2) 把当前目标世界坐标转成栅格（用**当帧** origin，避免漂移错位）；
-          3) target_keep_verify 为 True 时校验：该格仍是自由格且 4 邻域含未知格
-             （即仍是前沿候选）；否则视为已不再是前沿，清空后重新选点；
-          4) 复用本轮距离场做 plan(..., inflation_radius_cells) 验证可达；失败则清空；
-          5) 全部通过 -> 重新发布同一目标/路径（仍走阿克曼轨迹生成，避免与首轮路径
-             在折线/平滑轨迹之间来回切换），刷新 _current_target_time，不累加 _goal_count。
+        两种模式：
+          - ``target_lock_until_reached=True``（默认，2026-10-22 决策）：
+            目标**一直沿用直到到达**。跳过迟滞时长判定，也跳过"是否仍是前沿"的校验
+            （车走近后目标格通常已被观测成自由格，严格校验会导致行进中途换目标）。
+          - ``target_lock_until_reached=False``：旧行为（迟滞到期即允许换目标）。
+            判定顺序：已有目标且未超迟滞时长 -> 转栅格 -> target_keep_verify 校验
+            仍是前沿 -> A* 可达 -> 重发。
+
+        两种模式共用：
+          - 目标世界坐标转成栅格时用**当帧** origin，避免地图漂移导致错位；
+          - A* 先用 inflation_radius_cells 验证，失败再用降级膨胀（max(3, inflation-2)）
+            重试一次；两次都失败才认为真不可达，清空目标（安全逃生口 1）；
+          - 通过后重新发布同一目标/路径（仍走阿克曼轨迹生成，避免折线与平滑轨迹来回
+            切换），刷新 _current_target_time，不累加 _goal_count。
         """
         if self._current_target_world is None or self._current_target_time is None:
             return False
-        if (now_sec - self._current_target_time) >= self._target_hysteresis_sec:
+        if (
+            not self._target_lock_until_reached
+            and (now_sec - self._current_target_time) >= self._target_hysteresis_sec
+        ):
             return False
 
         target_grid = self._world_to_grid(self._current_target_world, warn=False)
@@ -916,7 +1060,9 @@ class FrontierExplorerNode(Node):
             self._clear_current_target("已不在地图范围内")
             return False
 
-        if self._target_keep_verify:
+        # 目标锁定模式下不做"仍是前沿"校验：车接近目标后该区域被观测为自由格是正常
+        # 现象，此时仍然应该走到目标点再换下一个前沿。
+        if self._target_keep_verify and not self._target_lock_until_reached:
             row, col = target_grid
             # explored_map 语义：-1 未知 / 0 自由 / 1 障碍。只有自由格（0）可能是前沿。
             value = int(explored_map[row, col])
@@ -942,9 +1088,36 @@ class FrontierExplorerNode(Node):
             use_eight_neighbors=self._use_eight_neighbors,
             treat_unknown_as_obstacle=self._treat_unknown_as_obstacle,
             distance_field=planner_distance_field,
+            clearance_target_cells=self._clearance_target_cells,
+            clearance_weight=self._clearance_weight,
+            start_clear_cells=self._start_clear_cells,
         )
         if path_indices is None:
-            self._clear_current_target("当前膨胀半径下 A* 不可达")
+            # 目标锁定：不立即清空。先用降级膨胀（max(3, inflation-2)，0.15 m 仍大于
+            # 车半宽 0.10 m）给同一目标一次机会，避免"途经墙缝/墙角时一次规划失败就换目标"。
+            reduced_inflation = max(self._inflation_radius_cells - 2, 3)
+            if reduced_inflation < self._inflation_radius_cells:
+                path_indices = self._planner.plan(
+                    explored_map,
+                    robot_grid,
+                    target_grid,
+                    inflation_radius_cells=reduced_inflation,
+                    use_eight_neighbors=self._use_eight_neighbors,
+                    treat_unknown_as_obstacle=self._treat_unknown_as_obstacle,
+                    distance_field=planner_distance_field,
+                    clearance_target_cells=self._clearance_target_cells,
+                    clearance_weight=self._clearance_weight,
+                    start_clear_cells=self._start_clear_cells,
+                )
+                if path_indices is not None:
+                    self.get_logger().warn(
+                        "当前目标在标准膨胀下暂时不可达，用降级膨胀 "
+                        f"{reduced_inflation} 格继续朝同一目标走",
+                        throttle_duration_sec=5.0,
+                    )
+        if path_indices is None:
+            # 标准与降级膨胀都不可达：如实清空目标，交给黑名单与重新选点。
+            self._clear_current_target("当前膨胀半径与降级膨胀下 A* 均不可达")
             return False
 
         # 沿用成功：重新发布同一目标/路径（下游 stale 兜底依赖持续刷新）。
@@ -1345,7 +1518,10 @@ class FrontierExplorerNode(Node):
 
         必须放在目标迟滞判断**之前**：否则新观测障碍出现后，迟滞仍会沿用旧目标并
         重发同一条已不可走的路径，直到迟滞过期才重新选点。
-        - 任一点是障碍（1）-> warn（2s 节流）+ 清空当前目标/路径，本轮立即重规划；
+        - 任一点是障碍（1）:
+            * ``target_lock_until_reached=True``：**只清掉缓存路径**，目标保持不变，
+              本轮随后的 _keep_current_target 会用同一目标重新规划一条新路径；
+            * 关闭锁定时：warn + 清空当前目标/路径，本轮立即重新选点（旧行为）。
         - 任一点是未知（-1）-> info（5s 节流），不重规划（本轮未知格按障碍处理，
           正常不会出现在已发布路径上）。
         """
@@ -1367,6 +1543,15 @@ class FrontierExplorerNode(Node):
                 has_unknown = True
 
         if has_obstacle:
+            if self._target_lock_until_reached:
+                # 目标锁定：不换目标，只让旧路径失效，稍后用同一目标重新规划。
+                self.get_logger().warn(
+                    f"路径前 {self._path_block_check_m:g}m 被新观测障碍占据，"
+                    f"保持当前目标不变，用同一目标重新规划路径",
+                    throttle_duration_sec=2.0,
+                )
+                self._current_path_world = None
+                return True
             self.get_logger().warn(
                 f"路径前 {self._path_block_check_m:g}m 被新观测障碍占据，"
                 f"立即重规划（跳过迟滞）",
@@ -1427,6 +1612,10 @@ class FrontierExplorerNode(Node):
                         res_m=float(self._grid_msg.info.resolution),
                         # traj_safety_cells 不新增参数：直接复用 inflation_radius_cells。
                         safety_cells=float(self._inflation_radius_cells),
+                        # B 方案：轨迹模块的 A* 软代价与视线捷径净空门槛都用同一个值，
+                        # 避免"上游撑开、下游捷径又拉直"。
+                        clearance_target_cells=self._clearance_target_cells,
+                        clearance_weight=self._clearance_weight,
                         ds_m=self._traj_ds_m,
                         v_max=self._traj_v_max,
                         v_min=self._traj_v_min,
@@ -1514,6 +1703,10 @@ class FrontierExplorerNode(Node):
 
         注意：**回退原始 A* 折线仍然保留**（本轮不取消回退），只是"连续失败多次
         就不再死磕这个目标"。被拉黑的目标在本轮已经发布过，下一轮由黑名单掩码过滤。
+
+        ``target_lock_until_reached=True`` 时不拉黑、不清空目标：轨迹生成失败只是回退到
+        原始 A* 折线，仍然应该朝同一个前沿走完，换目标由"到达/不可达/卡死"三个逃生口
+        决定。此时只保留日志，避免行进途中因为轨迹生成抖动而换目标。
         """
         if traj_success is None:
             return
@@ -1525,6 +1718,14 @@ class FrontierExplorerNode(Node):
             self._traj_fail_counts.pop(key, None)
             self._hard_target_fail_totals.pop(key, None)
         else:
+            if self._target_lock_until_reached:
+                # 目标锁定：只记录，不拉黑、不清空目标（继续朝同一目标走）。
+                self.get_logger().warn(
+                    f"目标 ({goal_world[0]:.2f}, {goal_world[1]:.2f}) 阿克曼轨迹生成失败，"
+                    f"已回退原始 A* 折线；目标锁定开启，继续朝同一目标走",
+                    throttle_duration_sec=5.0,
+                )
+                return
             count = int(self._traj_fail_counts.get(key, 0)) + 1
             self._traj_fail_counts[key] = count
             if count >= self._traj_fail_blacklist_count:

@@ -83,6 +83,8 @@ class AStarPlanner:
         treat_unknown_as_obstacle: bool = None,
         distance_field: Optional[np.ndarray] = None,
         start_clear_cells: int = 0,
+        clearance_target_cells: float = 0.0,
+        clearance_weight: float = 0.0,
     ):
         """在当前探索地图上规划从 start 到 goal 的 A* 路径。
 
@@ -105,6 +107,14 @@ class AStarPlanner:
         :param start_clear_cells: 起点本体占位圈半径（栅格，Chebyshev 距离）。大于 0 时把
             起点格周围该圈内的阻挡掩膜清零（**只清阻挡掩膜，不改地图/终点判定**）。
             默认 0 = 完全跳过，行为与改造前逐位一致。详见下方掩膜构造处的说明。
+        :param clearance_target_cells: **软性**期望净空（栅格）。距离小于该值的格子会
+            附加二次代价 `weight * (target - d)^2`，让路径主动往开阔侧偏，而不是贴着
+            硬膨胀边界走。默认 0 = 关闭（既有离线/训练调用行为逐位不变）。
+            只对**已知障碍**生效（未知格仍只做硬阻挡），因此不会把前沿目标格"推走"。
+        :param clearance_weight: 软性净空代价权重（每格）。默认 0 = 关闭。
+            经验取值：target=10 格、weight=0.05 时，贴墙 30 格的额外代价约 37，
+            足以让规划选择多绕 10~15% 的路径（与本项目的绕行预算一致）。
+            该代价恒非负，不破坏启发式可采纳性。
         :return: 栅格路径 [[x, y], ...]（起点在前、终点在后）；规划失败返回 None。
         """
         sx, sy = int(start[0]), int(start[1])
@@ -181,6 +191,25 @@ class AStarPlanner:
                 chebyshev = np.maximum(np.abs(rows - sx), np.abs(cols - sy))
                 block_mask[r0:r1, c0:c1][chebyshev <= clear_radius] = False
 
+        # ------------------------------------------------------------------
+        # 软性净空代价（2026-10-22 决策）：硬膨胀只能保证"不贴墙"，但掩膜外所有格子
+        # 代价相同，最短路径必然压在膨胀边界上（距障碍恰好 R 格）。这里叠加
+        # `weight * (target - d)^2`，让路径主动往开阔侧偏，给阿克曼倒角
+        # （R=0.35m 时内切约 2.9 格）和循迹误差留出余量。
+        # 未知格不参与本代价：前沿目标天然紧贴未知，若把未知计入会把目标推开。
+        # ------------------------------------------------------------------
+        soft_target = max(float(clearance_target_cells), 0.0)
+        soft_weight = max(float(clearance_weight), 0.0)
+        soft_distance = None
+        if soft_weight > 0.0 and soft_target > 0.0:
+            if distance_field is not None and distance_field.shape == explored_map.shape:
+                # 调用方已算好距离场（需保证其截断上限 >= soft_target，见调用侧说明）。
+                soft_distance = distance_field
+            else:
+                soft_distance = distance_to_obstacle(
+                    known_obstacles, max_distance=soft_target + 2.0
+                )
+
         # 按上述硬阻挡规划；失败直接返回 None，由调用方决定是否用未膨胀参数重试。
         return self._search(
             explored_map,
@@ -191,13 +220,32 @@ class AStarPlanner:
             gy,
             motions=self._build_motions(eight),
             eight=eight,
+            soft_distance=soft_distance,
+            soft_target=soft_target,
+            soft_weight=soft_weight,
         )
 
-    def _search(self, explored_map, block_mask, sx, sy, gx, gy, motions=None, eight=False):
+    def _search(
+        self,
+        explored_map,
+        block_mask,
+        sx,
+        sy,
+        gx,
+        gy,
+        motions=None,
+        eight=False,
+        soft_distance=None,
+        soft_target=0.0,
+        soft_weight=0.0,
+    ):
         """在给定阻挡掩膜（block_mask）下做 A*，返回路径或 None。
 
         启发式、单步代价（含迷雾惩罚）与路径回溯逻辑与原始实现保持一致，唯一的区别是
         邻接判定由"该格是障碍"改为"该格在膨胀后仍不是阻挡"。
+
+        ``soft_distance`` 非空时，对离障碍距离小于 ``soft_target`` 的格子附加
+        ``soft_weight * (soft_target - d)^2`` 的软代价；启发式不包含该项，故仍可采纳。
 
         `eight=True` 时：对角步代价 sqrt(2)、启发式用可采纳的 octile 距离，并且**禁止
         穿角**——对角扩展要求当前格的两个正交邻格都不阻挡，否则会从两个障碍的缝隙
@@ -243,6 +291,12 @@ class AStarPlanner:
                 step_cost = math.sqrt(2.0) if (dx != 0 and dy != 0) else 1.0
                 if explored_map[nx, ny] == -1:
                     step_cost += self.fog_penalty
+                # 软性净空代价：越靠近已知障碍越贵，使路径主动居中/走开阔侧。
+                if soft_distance is not None and soft_weight > 0.0:
+                    clearance = float(soft_distance[nx, ny])
+                    if clearance < soft_target:
+                        gap = soft_target - clearance
+                        step_cost += soft_weight * gap * gap
 
                 new_g = g + step_cost
                 if (nx, ny) not in g_costs or new_g < g_costs[(nx, ny)]:

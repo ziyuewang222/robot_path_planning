@@ -95,6 +95,15 @@ class AckermannTrajConfig:
     max_reverse_len_m: float = 0.60     # 三点掉头中倒车段的最大弧长
     shortcut_max_iters: int = 200
 
+    # ---- 软性期望净空（2026-10-22 决策，A+B 方案的 B 部分）----
+    # 目标：折线主动走开阔侧，并**阻止视线捷径把已经撑开的折线重新拉直**。
+    # safety_cells 仍是硬下限（5 格）；clearance_target_cells 是软性期望值。
+    #   默认 0 = 关闭，既有离线/训练/评测调用行为逐位不变；
+    #   部署侧（frontier_explorer）传 10 格（0.5 m），给倒角内切（R=0.35 m 时
+    #   约 2.9 格）和循迹误差留余量。
+    clearance_target_cells: float = 0.0
+    clearance_weight: float = 0.05      # A* 软代价权重（每格，二次型）
+
 
 @dataclass
 class Trajectory:
@@ -315,6 +324,7 @@ def _line_safe_cells(
     dense_step_cells: float = 0.25,
     start_zone: Optional[_StartZone] = None,
     grid_to_world_xy: Optional[Callable] = None,
+    min_clearance_cells: float = 0.0,
 ) -> bool:
     """视线捷径的整条连线是否安全。
 
@@ -328,6 +338,10 @@ def _line_safe_cells(
     修复 A：传入 ``start_zone`` 与 ``grid_to_world_xy`` 时，落在本体占位圈内的格子
     豁免障碍/安全距离检查（未知格仍硬禁止）。否则起点贴墙时视线捷径的第一段必然
     不满足安全距离，整条路线会被误判为 "A* 路径不满足安全距离"。
+
+    2026-10-22（B 方案）：``min_clearance_cells > 0`` 时，连线上的点还要求到最近
+    已知障碍的距离 >= 该值。这是**软性期望净空**在捷径阶段的落地——否则捷径会把
+    A* 刚刚"撑开"的折线重新拉直，退化成贴墙走。
     """
     h, w = explored.shape
 
@@ -342,7 +356,12 @@ def _line_safe_cells(
                 return True
         if explored[r, c] == 1:
             return False
-        return float(distance[r, c]) >= float(safety_cells)
+        d = float(distance[r, c])
+        if d < float(safety_cells):
+            return False
+        if min_clearance_cells > 0.0 and d < float(min_clearance_cells):
+            return False
+        return True
 
     for r, c in _bresenham(r0, c0, r1, c1):
         if not cell_ok(r, c):
@@ -561,6 +580,10 @@ def _plan_grid_path(
         # 返回 None（实测 201/533 的回退原因）。机器人物理上占着这一圈，清空它
         # 是 costmap 的标准做法，不会放宽圈外的安全距离。
         start_clear_cells=_start_clear_cells(config),
+        # 软性净空代价：轨迹内部的（起步机动后）重规划也走开阔侧，
+        # 否则会和上游 A* 的撑开结果互相矛盾。默认 0 = 关闭。
+        clearance_target_cells=float(getattr(config, "clearance_target_cells", 0.0)),
+        clearance_weight=float(getattr(config, "clearance_weight", 0.0)),
     )
 
 
@@ -577,6 +600,7 @@ def _shortcut_grid_path(
     max_iters,
     start_zone: Optional[_StartZone] = None,
     grid_to_world_xy: Optional[Callable] = None,
+    min_clearance_cells: float = 0.0,
 ):
     """用 Bresenham 视线捷径压缩栅格折线。
 
@@ -599,30 +623,47 @@ def _shortcut_grid_path(
     i = 0
 
     while i < n - 1:
-        found: Optional[int] = None
-        # 每个接受段重新获得一份预算。
-        iters = 0
-        for j in range(n - 1, i, -1):
-            iters += 1
-            if _line_safe_cells(
-                int(path[i][0]), int(path[i][1]),
-                int(path[j][0]), int(path[j][1]),
-                explored, distance, safety_cells,
-                start_zone=start_zone,
-                grid_to_world_xy=grid_to_world_xy,
-            ):
-                found = j
-                break
-            if iters >= int(max_iters):
-                break
+        def _find_far_end(clearance: float) -> Optional[int]:
+            """在 [i+1, n-1] 里从远到近找第一个满足净空要求的端点。"""
+            budget = 0
+            for j in range(n - 1, i, -1):
+                budget += 1
+                if _line_safe_cells(
+                    int(path[i][0]), int(path[i][1]),
+                    int(path[j][0]), int(path[j][1]),
+                    explored, distance, safety_cells,
+                    start_zone=start_zone,
+                    grid_to_world_xy=grid_to_world_xy,
+                    min_clearance_cells=clearance,
+                ):
+                    return j
+                if budget >= int(max_iters):
+                    break
+            return None
+
+        # 先按"期望净空"找最远的可视端点。
+        # **关键**：找不到时**不允许**用"只看硬安全距离"的远端点来拉直——那样会把
+        # A* 刚撑开的折线重新压回 5 格边界，等于把 B 方案作废（实测 path 最小净空
+        # 从 9.8 格掉回 5~6 格）。这里只退到**相邻点**，保留 A* 的鼓形轮廓；
+        # 相邻点连净空也满足不了时才放宽到硬安全距离，保证轨迹生成不因净空而失败。
+        found = _find_far_end(min_clearance_cells)
         if found is None:
-            if not _line_safe_cells(
+            adjacent_ok = _line_safe_cells(
                 int(path[i][0]), int(path[i][1]),
                 int(path[i + 1][0]), int(path[i + 1][1]),
                 explored, distance, safety_cells,
                 start_zone=start_zone,
                 grid_to_world_xy=grid_to_world_xy,
-            ):
+                min_clearance_cells=min_clearance_cells,
+            ) or _line_safe_cells(
+                int(path[i][0]), int(path[i][1]),
+                int(path[i + 1][0]), int(path[i + 1][1]),
+                explored, distance, safety_cells,
+                start_zone=start_zone,
+                grid_to_world_xy=grid_to_world_xy,
+                min_clearance_cells=0.0,
+            )
+            if not adjacent_ok:
                 return None
             found = i + 1
         accepted.append(found)
@@ -1201,6 +1242,8 @@ def _build_route(
         # 否则贴墙起步时捷径第一段必然不满足构建安全距离。
         start_zone=start_zone,
         grid_to_world_xy=grid_to_world_xy,
+        # B 方案：捷径必须同时守住"软性期望净空"，否则会把 A* 刚撑开的折线拉直。
+        min_clearance_cells=float(getattr(config, "clearance_target_cells", 0.0)),
     )
     if short_path is None:
         return None, 0.0, "A* 路径不满足安全距离"

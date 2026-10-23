@@ -13,7 +13,7 @@
 #        若从最大化的 IDE 终端启动，窗口会被 IDE 完全盖住而“看不到”）
 #
 # 用法：
-#   bash /home/wzy/robot_path_planning/ros2_ws/run_sim.sh
+#   bash <本目录>/run_sim.sh
 #   可选追加 launch 参数，例如：
 #   bash run_sim.sh viz:=false        # 不弹 matplotlib，只留 Gazebo 窗口
 #   bash run_sim.sh headless:=true    # 无显示环境：只跑物理仿真，不弹 gzclient
@@ -26,7 +26,10 @@
 # =============================================================================
 set -u
 
-WS="/home/wzy/robot_path_planning/ros2_ws"
+# 工作区根目录 = 本脚本所在目录（不再写死绝对路径）。
+# 这样把整个 ros2_ws 拷到别的机器/路径后仍可直接运行
+# （前提：已在目标机执行过 colcon build，install/ 里的路径是构建时生成的）。
+WS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG="${WS}/run_sim.log"
 
 # 需要清理/关停的进程名特征（pkill -f，进程名或命令行命中即可）
