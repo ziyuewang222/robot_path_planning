@@ -1523,3 +1523,336 @@ map: 292x284 res=0.050 unknown=20582 free=61936 occ=410
 4. **真机驱动兼容性**：`inf`、`NaN`、`0`、`>=8.0 m` 四种“无回波”写法都已覆盖；若驱动把无回波写成其他特殊值（如负值），需要在本节点补一条判断。
 5. **Foxy / Humble**：节点只用 `rclpy` + `sensor_msgs`，两版通用；Humble 的 occupancy grid 可执行名差异仍由 `real_bringup.launch.py` 的 `occupancy_grid_executable` 参数处理。
 
+# 附十九、目标锁定：必须到达当前前沿才允许选下一个（2026-10-22）
+
+## 0. 结论速览
+
+- **需求**：上层选出某个前沿目标后，必须**走到它（距离 < `goal_tolerance`）**才允许选下一个前沿；**不允许在行进途中换目标**。
+- **实现**：`frontier_explorer_node` 新增参数 `target_lock_until_reached`（默认 `True`）。
+  开启后：
+  1. 跳过 `target_hysteresis_sec` 的迟滞到期判定（不再每 10 s 换一次目标）；
+  2. 跳过"目标是否仍是前沿"的校验（车靠近后目标格被观测成自由格属正常现象）；
+  3. 跳过"连续阿克曼轨迹失败就拉黑换目标"（轨迹失败只回退原始 A* 折线，仍朝同一目标走）；
+  4. 路径被**新观测障碍**挡住时，只作废旧路径，用**同一目标**重新规划，不换目标。
+- **保留的两个安全逃生口**（必须保留，否则会永久空转）：
+  1. **A\* 完全不可达**：先按 `inflation_radius_cells` 规划，失败再用零膨胀规划一次；两次都失败才清空目标；
+  2. **卡死检测**：`stall_detect_sec`（默认 45 s）内位移 < `stall_move_eps`（默认 0.30 m），
+     放弃当前目标并加入临时黑名单。
+  另有既有超时 / 最大目标数 / 无前沿完成判定，不受本开关影响。
+- **关闭方式**：`target_lock_until_reached:=false`，回到旧的"迟滞"行为（便于 A/B 对比）。
+
+## 1. 为什么需要这个开关
+
+旧逻辑（仅 10 s 迟滞 + 每次重新校验"仍是前沿"）在实跑中会出现：
+
+- 车刚朝某个前沿走出 1~2 m，目标格被新观测覆盖 → 4 邻域不再有未知格 → 判"不再是前沿"
+  → 立刻换目标，导致车在两点之间来回改向；
+- 行进途中出现"看起来更近/更划算"的前沿，也会被重新选中；
+- 结果：`_goal_count` 虚增、覆盖率增长慢、控制端频繁重跟随、轨迹抖动。
+
+锁定后，目标选择频率与"到达次数"一一对应，便于统计"每到达一个前沿消耗多少时间"。
+
+## 2. 参数与接线
+
+| 位置 | 参数 | 默认值 | 说明 |
+|---|---|---|---|
+| `frontier_explorer_node` | `target_lock_until_reached` | `True` | 总开关 |
+| `frontier_explorer_node` | `target_hysteresis_sec` | `10.0` | 仅在开关关闭时生效 |
+| `frontier_explorer_node` | `target_keep_verify` | `True` | 仅在开关关闭时生效（锁定模式下不校验） |
+| `exploration_bringup.launch.py` | `target_lock_until_reached` | `True` | 仿真入口透传 |
+| `real_bringup.launch.py` | `target_lock_until_reached` | `True` | 真机入口透传 |
+
+代码位置（`ros2_ws/src/regional_explorer/regional_explorer/frontier_explorer_node.py`）：
+
+- `_keep_current_target()`：锁定模式下跳过迟滞与"仍是前沿"校验，A* 失败后追加零膨胀重试；
+- `_replan_if_path_blocked()`：锁定模式下只清 `_current_path_world`，不清目标；
+- `_record_traj_result()`：锁定模式下不拉黑、不清空目标，只打 warn。
+
+## 3. 实测（2026-10-22，房间 `room.world`，headless，60 s 采样）
+
+```text
+t=  0.5s goal=(-8.56, 7.77) robot=(-3.49, 7.70) dist=5.07
+t= 10.7s goal=(-7.01, -0.58) robot=(-8.32, 7.72) dist=8.40   ← 到达上一个目标(0.24m)后才换
+```
+
+日志中目标切换全部由"到达"触发（节选）：
+
+```text
+到达当前目标 (6.53, 0.13)，距离 0.310m，允许重新选点
+到达当前目标 (8.13, 4.28)，距离 0.289m，允许重新选点
+到达当前目标 (7.93, 6.23)，距离 0.219m，允许重新选点
+到达当前目标 (1.33, 7.83)，距离 0.223m，允许重新选点
+到达当前目标 (-1.72, 7.59)，距离 0.216m，允许重新选点
+到达当前目标 (-8.56, 7.77)，距离 0.281m，允许重新选点
+到达当前目标 (-7.01, -0.58)，距离 0.299m，允许重新选点
+```
+
+唯一一次非到达切换是安全逃生口：
+
+```text
+清空当前目标 (-1.22, 7.59)：当前膨胀半径与零膨胀下 A* 均不可达
+```
+
+该点在 `(0, 7)` 台子旁边，A* 在"未知格当障碍"口径下确实无路，属于设计内的逃生口。
+
+## 4. 复现命令
+
+```bash
+bash /home/wzy/robot_path_planning/ros2_ws/run_sim.sh headless:=true viz:=false
+# 另开终端观察目标是否只在到达后变化
+ros2 topic echo /exploration_goal --field pose.position
+# 对照日志
+grep -E '到达当前目标|清空当前目标|保持当前目标不变' ros2_ws/run_sim.log
+```
+
+## 5. 注意事项
+
+1. 锁定模式下**目标可能"过时"**（原本的未知区域被别的方向先看到）。这是刻意的取舍：
+   保证"一个前沿走到底"，而不是追求每一步都最优。
+2. `goal_tolerance` 是唯一的正常换目标入口；调大它会更快换目标，调小会在目标附近徘徊更久。
+3. 卡死逃生口仍会换目标，日志关键字是 `放弃并加入黑名单`；若频繁出现，说明路径规划/控制确实到不了，应改路径层而不是取消逃生口。
+4. 关闭 `target_lock_until_reached` 时可与开启时做 A/B 对比：开启后 `_goal_count` 增速应明显下降，
+   而"到达次数"应基本不变。
+
+# 附二十、拐角避障：软性净空 A* + 轨迹撑弯（A+B 方案，2026-10-22）
+
+## 0. 结论速览
+
+- **问题**：方形障碍物拐角处反复"顶住 → 倒车 → 调角度 → 再顶住"。
+- **根因（数字链）**：
+  1. A* 只有硬膨胀，掩膜外所有格子代价相同 → 最短路径必然压在 **5 格 = 0.25 m** 的膨胀边界上；
+  2. 阿克曼倒角的圆弧向转角内侧切 `R(√2−1) = 0.35×0.414 = 0.145 m = 2.9 格`
+     → 转角实际净空只剩 **2.1 格 = 0.105 m**，而车体半宽约 **0.10 m**；
+  3. 控制器 `brake_distance=0.30 m`，一进转角墙面正对车头 → 必然触发脱困；
+  4. 旧的两条回退（轨迹失败发原始折线、A* 失败用零膨胀路径）都会产出**更贴墙**的路径。
+- **本轮改动（只做 A+B，外加删除零膨胀回退）**：
+  - **A**：`AStarPlanner.plan()` 新增 `clearance_target_cells` / `clearance_weight`，
+    对 `d < target` 的格子叠加 `weight × (target − d)²` 软代价；
+  - **B**：`AckermannTrajConfig` 新增同名参数，轨迹内部的 A* 与**视线捷径**都按期望净空约束，
+    防止"上游撑开、下游捷径又拉直"；
+  - **删除零膨胀回退**：`frontier_explorer_node` 初始选点与保持目标都不再用
+    `inflation_radius_cells=0` 重试；失败就如实不出目标 / 清空目标；
+  - 起点本体占位圈 `start_clear_cells = ceil(inflation)+1 = 6` 传入 A*，避免"起点格在膨胀区"
+    导致的频繁误判（这不是安全放宽，只是 footprint clearing）。
+- **参数**：`clearance_target_cells=10`（0.50 m）、`clearance_weight=0.05`；
+  距离场上限同步从 `max(safe,inflation)+2 = 7 格` 抬到 **12 格**（否则软代价被截断失效）。
+- **取舍**：接受 10~15% 的路径绕行；窄处允许降速通过，不为净空牺牲可达性。
+
+## 1. 为什么是 10 格
+
+```text
+5 格（硬下限）
++ 2.9 格（R=0.35 m 倒角内切）
++ 1 格（循迹误差）
++ ~1 格（余量）
+≈ 9~10 格 = 0.45~0.50 m
+```
+
+`clearance_weight=0.05` 的量级：贴墙 30 格的额外代价 ≈ 30 × 5² × 0.05 = 37.5，
+足以让规划选择多绕 10~15%（约 10~20 格）的路径。
+
+## 2. 实测（`room.world`，headless，2026-10-22）
+
+### 2.1 规划路径净空（对 `/exploration_path` 逐点查距离场，单位：格）
+
+| 配置 | 样本 | 最小净空中位数 | 内部点最小净空 < 5 格占比 |
+|---|---|---|---|
+| 仅硬膨胀（`clearance=0`） | — | ≈5（理论上压在膨胀边界） | 高（结构决定） |
+| A+B，**含首尾点** | 33~84 | 9.8~21 | 14~18% |
+| A+B，**排除首尾各 5 点** | 51 | **8.49** | **5.9%** |
+
+内部点中位数 8.49 格 ≈ 0.42 m，正好等于"10 格 − 倒角内切 2.9 格"的预期值。
+说明：**直道与拐角中段已经不贴墙**；首尾点仍有 5 格左右，是目标/起点本身贴近障碍。
+
+### 2.2 脱困次数（`开始三点掉头脱困` 计数）
+
+| 配置 | 脱困次数 | 到达目标数 | 脱困/到达 |
+|---|---|---|---|
+| 仅硬膨胀（baseline） | 20 | 6 | **3.33** |
+| A+B | 16 | 8 | **2.00** |
+
+单次到达所需脱困次数下降约 **40%**，但**没有归零**。剩余脱困集中在"到达目标的那一刻"。
+
+### 2.3 残存现象（重要，未修）
+
+- 前沿目标本身可能就在柱子/台子旁 **5 格**处（候选过滤 `obstacle_safe_distance=5`），
+  车必须开进这个"口袋"才能判到达，于是最后一米仍会刹车/倒车。
+- 轨迹模块的 `A* 无路` 仍占六成以上（`inflation = ceil(safety+0.5) = 6`，比上游 5 更严）；
+  回退到原始 A* 折线时，折线已被 A 撑到 10 格，所以危害远小于改造前。
+- 若要继续降低脱困次数，下一步应做**目标外移**（把 goal 沿距离场梯度挪到
+  `clearance_target_cells` 之外，再判到达）或调整控制器的刹车口径——这两项都属于
+  本轮明确排除的范围（C/D 方案），未实施。
+
+## 3. 复现与验证
+
+```bash
+# 默认（A+B 开启）
+bash /home/wzy/robot_path_planning/ros2_ws/run_sim.sh headless:=true viz:=false
+
+# 关闭软性净空做 A/B 对比
+bash /home/wzy/robot_path_planning/ros2_ws/run_sim.sh headless:=true viz:=false \
+  clearance_target_cells:=0 clearance_weight:=0.0
+```
+
+观察点：
+
+```bash
+ros2 topic echo /exploration_path --field poses
+grep -cE '开始三点掉头脱困' ros2_ws/run_sim.log
+grep -cE '到达当前目标' ros2_ws/run_sim.log
+```
+
+## 4. 参数表
+
+| 位置 | 参数 | 默认 | 说明 |
+|---|---|---|---|
+| `a_star.AStarPlanner.plan` | `clearance_target_cells` | 0（库默认关闭） | 软性期望净空（格） |
+| `a_star.AStarPlanner.plan` | `clearance_weight` | 0 | 二次代价权重 |
+| `AckermannTrajConfig` | `clearance_target_cells` | 0（离线默认关闭） | 轨迹 A* 与捷径的净空门槛 |
+| `AckermannTrajConfig` | `clearance_weight` | 0.05 | 同上 |
+| `frontier_explorer` | `clearance_target_cells` | 10.0 | 部署默认开启 |
+| `frontier_explorer` | `clearance_weight` | 0.05 | |
+| launch | 同名参数 | 10.0 / 0.05 | 仿真与真机入口均已透传 |
+
+> 离线训练/评测调用不传这两个参数，行为与改造前**逐位一致**。
+
+# 附二十一、伪完成修复：次优候选 + 降级膨胀（2026-10-22）
+
+## 0. 结论速览
+
+- **现象**：小车在某处"卡住不再行动"（cmd_vel=0、剩余 0.22 m、done=假），
+  实际是**伪完成**的前一刻：地图还有大量未知（约 47% 已知），却已判定"探索完成"。
+- **根因**：删除零膨胀回退后，贴墙/墙角前沿（"自由格 + 4 邻域含未知"天然贴近
+  障碍口袋）在 5 格膨胀下 A* 不可达。而初始选点**每轮只试一个 best 候选**，
+  失败就计入"无目标"streak → 连续 10 轮 → `_declare_done` 伪完成。
+  截图那轮完整日志：
+  ```text
+  到达 (6.38,-0.22) 0.263m → 清空目标重选
+  清空 (8.13,-4.27)：当前膨胀半径下 A* 不可达      ← 墙角口袋前沿
+  到达 (7.93,-6.27) 0.223m → 清空目标重选          ← 截图时刻
+  "该前沿在膨胀半径 5 格下不可达，本轮不出目标" ×5 轮
+  探索完成（连续多轮未产出可达目标）               ← 伪完成
+  ```
+- **修复（2 处）**：
+  1. **初始选点**：A* 失败先降级膨胀 `max(3, inflation-2)` 重试一次，再失败就把该
+     候选临时排除、`_decide_frontier` 选下一个候选，最多 `candidate_retry_count=5`
+     个；全部失败才计入 streak。
+  2. **保持目标（目标锁定内）**：`_keep_current_target` 的 A* 失败先用降级膨胀给同一
+     目标一次机会，成功则继续朝它走；两次都失败才清空换目标。
+- **实测**：370 s 内到达 10 次、无伪完成；结束时为**自然完成**
+  （连续 10 轮 `decide_frontier` 返回 None = 真无前沿），保存地图
+  `exploration_map_no_frontier.pgm`（575×420@0.05）：unknown≈8.7%（含地图边界外）、
+  occ≈3%，room 内部覆盖 95% 以上。对比修复前伪完成时 known≈114037/241500≈47%。
+
+## 1. 为什么降级到 3 格而不是 0 格
+
+- 用户决定是"删除**零膨胀**回退"（0 格净空太贴墙）。3 格 = 0.15 m，
+  仍大于车体半宽约 0.10 m，安全意图保留。
+- 降级只作为"规划重试"，发布后仍走阿克曼轨迹 + 软净空；且首选仍是标准 5 格，
+  3 格只是兜底。
+
+## 2. 参数
+
+| 位置 | 参数 | 默认 | 说明 |
+|---|---|---|---|
+| `frontier_explorer` | `candidate_retry_count` | 5 | 初始选点失败时最多尝试的候选数 |
+| `_on_timer` 内 | 降级膨胀 | `max(inflation-2, 3)` | 每个候选的第二次 A* |
+| `_keep_current_target` | 降级膨胀 | `max(inflation-2, 3)` | 保持目标时给同一目标一次机会 |
+
+## 3. 复现命令
+
+```bash
+bash /home/wzy/robot_path_planning/ros2_ws/run_sim.sh headless:=true viz:=false
+# 观察：应持续"到达当前目标"，且完成前 10 轮是"未找到可达前沿（第 n/10 轮）"
+# 而不是"A* 不可达 / 本轮不出目标"
+grep -cE '本轮不出目标|均不可达' ros2_ws/run_sim.log   # 应远小于到达次数
+```
+
+## 4. 与用户提议的关系（附十九/二十的延续）
+
+- 用户提议"目标近 + 车没动 → 允许重新规划"：已由 `goal_tolerance`（到达判定）和
+  stall 检测实现；本轮补的是**换目标后选不到可达目标**时的处理，两者互补。
+- 残余问题（未做，属于 C/D 方案）：前沿目标本身在墙角口袋（5 格内）时，
+  车必须开进袋口才能判到达，最后一米仍会刹车/脱困；根治需要"目标外移"或调控制器
+  刹车口径。
+
+# 附二十二、复杂封闭建筑地图 3d_enclosed.world（2026-10-22）
+
+## 0. 结论速览
+
+- **需求**：在"最开始那一版"复杂建筑（3d.world，开放式）上观察小车建图表现，
+  但开放式建筑车会跑出建筑到外围空地；加一圈封闭围墙。
+- **实现**：新建 `gazebo_modele/world/3d_enclosed.world` = 原 `3d.world` 全文 +
+  四面 2m 高静态围墙（唯一差异），**原 3d.world 保留不动**。
+- **围墙几何**：内净空 x∈[-20,20]（40m）、y∈[-20,16]（36m）；建筑外壳
+  x≈±18.7、y∈[-18.3,14.8]，四边与墙间隙 1.2~1.7m（小车可绕行）。四面墙互相
+  重叠 0.3m、四角闭合，车（宽 0.2m）物理上无法穿出。
+- **入口**：`complex_building_explore.launch.py` 新增 `headless` / `software_gl`
+  透传（与 exploration_demo 同口径），无显示环境验证可用 `headless:=true`。
+- **验证**（headless）：world 加载成功、fishbot spawn 成功、cartographer scan
+  5.99Hz 正常、explorer 持续发布阿克曼轨迹、bounds=(-19.0,19.5,-19.0,15.5)
+  与围墙内净空对齐。
+
+## 1. 命令
+
+```bash
+# 清理残留（避免端口 11345 被占；Ctrl-C 后再跑这行）
+pkill -9 -f gzserver; pkill -9 -f gzclient; pkill -9 -f cartographer_node; \
+pkill -9 -f frontier_explorer_node; pkill -9 -f path_follower_node; \
+pkill -9 -f scan_no_return_filter; sleep 1
+
+# 环境（系统原生终端，IDE 沙箱终端拿不到 GLX，Gazebo 窗口会闪退）
+source /opt/ros/foxy/setup.bash
+source /home/wzy/robot_path_planning/ros2_ws/install/setup.bash
+source /usr/share/gazebo/setup.sh
+export HOME=/tmp/roshome
+export GAZEBO_MODEL_DATABASE_URI=""
+
+# 启动：Gazebo 3D 窗口（复杂封闭建筑）+ Cartographer 建图 + 前沿探索 + 阿克曼控制
+ros2 launch bringup complex_building_explore.launch.py world:=3d_enclosed.world
+```
+
+可选：
+- 想回到原来的开放式复杂建筑：`world:=3d.world`。
+- 无显示环境验证：追加 `headless:=true`。
+- Gazebo 窗口 GLX 起不来：追加 `software_gl:=true`。
+- 调整探索时长/目标预算：`max_exploration_time_sec:=6000`、`max_goal_count:=1200` 等
+  （参数全表见 complex_building_explore.launch.py）。
+
+## 2. 建图可视化（matplotlib 实时窗口，2026-10-22 补齐）
+
+- 早期只有 `exploration_demo.launch.py`（room.world）挂了 `bringup/exploration_viz`；
+  `complex_building_explore.launch.py` 走的是 `exploration_bringup.launch.py`，
+  **没有**可视化节点。本轮把 viz 直接挂到复杂建筑入口上。
+- 窗口内容（与房间场景一致）：
+  - 灰色 = 未知 `-1`、白色 = 自由 `0..49`、黑色 = 障碍 `>=50`（0.05 m/格，不缩放）；
+  - 机器人位姿（红绿坐标轴）+ 历史轨迹（trail_len=200）；
+  - 当前目标点（星标）与规划路径（阿克曼轨迹，含每点朝向）；
+  - 标题栏：`到目标 x.xx m | cmd_vel | 已知栅格 | frame | 地图更新 | done`。
+- 参数：`viz`（默认 `true`）、`refresh_hz`（默认 `5.0`）。
+- **重要**：`headless:=true` 时 `gazebo.launch.py` 会用 scoped=False 清空 `DISPLAY`
+  （防止 gzserver 建 GLX 上下文），这个清空对整个 launch 生效，`exploration_viz`
+  也会拿到空 DISPLAY → matplotlib 退回 Agg、**窗口不出现**（进程不报错，只是静默）。
+  所以无显示环境必须 `headless:=true viz:=false`。
+- 验证：headless 仿真 + 独立起 viz（`DISPLAY=:1`）→ 出现 `Figure 1` 窗口，
+  viz 节点正常收到 `/map`，无 matplotlib 报错。
+
+## 3. 与 room.world 的差异要点（当前参数集）
+
+| 项 | 复杂封闭建筑 | room.world（房间） |
+|---|---|---|
+| world | 3d_enclosed.world | room.world |
+| inflation_radius_cells | 3（0.15m，门洞/走廊不被封死） | 5（0.25m） |
+| max_exploration_time_sec | 4500 | 1800 |
+| max_goal_count | 800 | 200 |
+| goal_count_min_move_m | 2.0 | 1.0 |
+| stall_detect_sec | 20 | 45 |
+| exploration_bounds | -19.0,19.5,-19.0,15.5 | 空（不启用） |
+
+## 4. 注意
+
+- 3d.world 的 SDF 有"Non-unique names detected in <link name='link'>"警告（原版固有，
+  不阻塞）；oak_tree/pine_tree 的 model:// mesh 找不到也是原版固有警告。
+- 建筑 `<state>` 会把 Untitled222 整体平移 (+3.901,+1.153)，门洞真实位置
+  x∈[7.7557,8.6557]、y=-8.515（见附十七），与围墙无关。
+

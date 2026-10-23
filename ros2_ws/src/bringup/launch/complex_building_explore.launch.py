@@ -24,6 +24,11 @@
 其余参数（目标迟滞、黑名单、路径跟随安全状态机等）全部透传 exploration_bringup
 的默认值，可用命令行 ``名字:=值`` 覆盖。禁止与 nav_slam/launch/2dpoints.launch.py
 同时运行（两者都会发布 /map 与坐标变换）。
+
+建图可视化：本文件默认启动 bringup/exploration_viz（matplotlib 窗口），实时显示
+栅格地图（灰=未知 / 白=自由 / 黑=障碍）、机器人位姿与轨迹、当前目标点、规划路径。
+无显示环境请加 ``headless:=true viz:=false``；只想静默出一张图可另行用
+``MPLBACKEND=Agg python3 -m bringup.exploration_viz --ros-args -p save_once:=/tmp/viz.png``。
 """
 
 import os
@@ -32,8 +37,10 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.actions import IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
 
 
 def generate_launch_description():
@@ -47,6 +54,18 @@ def generate_launch_description():
             "world",
             default_value="3d.world",
             description="要加载的世界文件名（gazebo_modele/world/ 下）",
+        ),
+        # headless/software_gl 透传（无显示环境验证用 headless:=true；
+        # 有显示环境观察 Gazebo 用默认 false）。
+        DeclareLaunchArgument(
+            "headless",
+            default_value="false",
+            description="true 时只起 gzserver、不起 gzclient（无显示环境用）",
+        ),
+        DeclareLaunchArgument(
+            "software_gl",
+            default_value="false",
+            description="true 时对 Gazebo 进程设 LIBGL_ALWAYS_SOFTWARE=1（软件 OpenGL）",
         ),
         DeclareLaunchArgument(
             "inflation_radius_cells",
@@ -112,12 +131,27 @@ def generate_launch_description():
         DeclareLaunchArgument("traj_v_min", default_value="0.08"),
         DeclareLaunchArgument("traj_a_lat_max", default_value="0.60"),
         DeclareLaunchArgument("traj_a_long_max", default_value="0.25"),
+        # ---- 建图可视化（matplotlib 实时窗口）----
+        # 与 exploration_demo.launch.py 同口径：栅格地图 + 机器人位姿/轨迹 + 目标点 + 路径。
+        # 无显示环境（headless:=true）请同时置 viz:=false，否则 matplotlib 会因无 DISPLAY 报错。
+        DeclareLaunchArgument(
+            "viz",
+            default_value="true",
+            description="是否启动 matplotlib 建图可视化窗口（实时看地图/位姿/目标/路径）",
+        ),
+        DeclareLaunchArgument(
+            "refresh_hz",
+            default_value="5.0",
+            description="可视化重绘频率（Hz）",
+        ),
     ]
 
     exploration = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(bringup_launch_path),
         launch_arguments={
             "world": LaunchConfiguration("world"),
+            "headless": LaunchConfiguration("headless"),
+            "software_gl": LaunchConfiguration("software_gl"),
             "inflation_radius_cells": LaunchConfiguration("inflation_radius_cells"),
             "treat_unknown_as_obstacle": LaunchConfiguration(
                 "treat_unknown_as_obstacle"
@@ -144,4 +178,22 @@ def generate_launch_description():
         }.items(),
     )
 
-    return LaunchDescription(declared_arguments + [exploration])
+    # 建图可视化节点：matplotlib 窗口实时显示
+    #   栅格地图（灰=未知 / 白=自由 / 黑=障碍）+ 机器人位姿与轨迹 + 目标点 + 规划路径。
+    # 与 exploration_demo.launch.py 完全同口径（use_sim_time=True），
+    # 只是把入口挂到复杂建筑 launch 上，避免再单独起一套。
+    viz = Node(
+        package="bringup",
+        executable="exploration_viz",
+        name="exploration_viz",
+        output="screen",
+        condition=IfCondition(LaunchConfiguration("viz")),
+        parameters=[
+            {
+                "use_sim_time": True,
+                "refresh_hz": LaunchConfiguration("refresh_hz"),
+            }
+        ],
+    )
+
+    return LaunchDescription(declared_arguments + [exploration, viz])
